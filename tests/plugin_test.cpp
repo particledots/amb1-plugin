@@ -81,8 +81,8 @@ int main()
                p.getProgramName(0) == "Garden" && p.getProgramName(7) == "Tides");
         report("a mono output layout is refused", [&] {
             juce::AudioProcessor::BusesLayout l = p.getBusesLayout();
-            l.getMainOutputChannelSet() = juce::AudioChannelSet::mono();
-            return !p.isBusesLayoutSupported(l);
+            l.getChannelSet(false, 0) = juce::AudioChannelSet::mono();   // (getMainOutputChannelSet() returns a copy)
+            return l.getMainOutputChannelSet() == juce::AudioChannelSet::mono() && !p.isBusesLayoutSupported(l);
         }());
         report("the editor can be created", [&] {
             std::unique_ptr<juce::AudioProcessorEditor> ed(p.createEditor());
