@@ -171,8 +171,15 @@ static void coreTests()
             }
             uint32_t go(double secs, double bpm)
             {
-                core.apply(c);
-                core.render(L.data(), R.data(), block, 1.0f);
+                // Warm up half a second before taking the count. en_bars is only written when the engine steps, and
+                // a (re)start from the top sets the step counter to 0: right after prepare it can still hold the
+                // previous run's value.
+                for (long n = 0; n < (long)(0.5 * sr); n += block)
+                {
+                    core.setHostTempo(bpm);
+                    core.apply(c);
+                    core.render(L.data(), R.data(), block, 1.0f);
+                }
                 const uint32_t base = en_bars;
                 for (long n = 0; n < (long)(secs * sr); n += block)
                 {
@@ -379,11 +386,54 @@ static void gardenTests()
     report("resting: the snapshot says not playing", !GardenState::capture(true, 0, 0, lvl).playing);
 }
 
+// A re-prepare (sample-rate change, audio stop/start) must start from what the controls say, not from what the
+// engine's file-static flags held from before.
+static void reprepareTests()
+{
+    printf("re-prepare starts from the controls\n");
+    std::vector<float> L(480), R(480);
+    auto settle = [&](AmbCore& core, const AmbControls& c) {
+        for (int i = 0; i < 20; ++i)
+        {
+            core.apply(c);
+            core.render(L.data(), R.data(), 480, 1.0f);
+        }
+    };
+    AmbCore core;
+    core.acquire();
+    AmbControls c = controlsFor(0);
+    core.prepare(48000.0, c);
+    c.freeze = true;
+    settle(core, c);
+    const bool wasFrozen = en_frozen == 1;
+    c.freeze = false;
+    core.prepare(48000.0, c);
+    settle(core, c);
+    report("frozen, then re-prepared with Freeze off: not frozen", wasFrozen && en_frozen == 0);
+
+    c.freeze = true;
+    core.prepare(44100.0, c);
+    settle(core, c);
+    report("re-prepared with Freeze on: frozen", en_frozen == 1);
+
+    c.freeze = false;
+    c.play = false;
+    core.prepare(48000.0, c);
+    settle(core, c);
+    report("playing, then re-prepared with Play off: resting", en_playing == 0);
+
+    c.play = true;
+    core.prepare(48000.0, c);
+    settle(core, c);
+    report("re-prepared with Play on: playing, not frozen", en_playing == 1 && en_frozen == 0);
+}
+
 int main()
 {
     resamplerTests();
     coreTests();
     gardenTests();
+    reprepareTests();
     printf(gOk ? "PASS\n" : "FAIL\n");
     return gOk ? 0 : 1;
 }

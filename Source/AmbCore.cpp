@@ -39,6 +39,11 @@ void AmbCore::prepare(double hostRate, const AmbControls& c)
     tickCountdown_ = 0.0;
 
     en_init();
+    // en_init() leaves the engine's playing and frozen flags as they were, and the engine is a process-wide
+    // singleton, so a re-prepare (sample-rate change, audio stop/start) would otherwise come back frozen or
+    // playing against the buttons. Clear both; the lines below then set them from the controls.
+    en_freeze(0);
+    en_play(0);
     en_set(P_MIDI, 0);   // MIDI out is a no-op in the plugin; keep the engine from generating it
 
     last_.fill(INT_MIN);
