@@ -19,7 +19,9 @@ What works (headless-tested, and tried in Logic Pro on an Intel Mac; not yet tri
 - The eight pieces as programs (factory presets): Garden, Departures, Voices, Afternoon, Night Bus,
   Shoreline, Glass, Tides.
 - Any host sample rate: the engine runs at 44.1 kHz and is resampled.
-- A grouped, resizable editor: knobs, a piece menu, Play / Freeze / Next chord, Master, and tooltips.
+- A grouped, resizable editor: a live picture of the garden across the top (the scale and chord, the four bell loops,
+  the level of each layer, the three pulse patterns, the way to the next chord), then knobs, a piece menu,
+  Play / Freeze / Next chord, Master, and tooltips.
 - Optional tempo sync (off by default): the garden follows the host's tempo instead of its own Tempo parameter.
 
 Known limits of this version:

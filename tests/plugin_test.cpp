@@ -118,10 +118,12 @@ int main()
         const Stats sa = run(a, 3.0, 48000.0, 512), sb = run(b, 3.0, 48000.0, 512);
         report("the first instance sounds", sa.rms > 0.005 && !a.isBlockedByAnotherInstance(), fmt(sa));
         report("the second is silent and says it is blocked", sb.allZero && b.isBlockedByAnotherInstance());
+        report("only the first owns the engine (so only it has a garden to show)", a.ownsEngine() && !b.ownsEngine());
         a.releaseResources();
         start(b, 48000.0, 512);
         const Stats sb2 = run(b, 3.0, 48000.0, 512);
         report("after the first lets go, the second sounds", sb2.rms > 0.005 && !b.isBlockedByAnotherInstance(), fmt(sb2));
+        report("and now the second owns the engine, the first does not", b.ownsEngine() && !a.ownsEngine());
     }
 
     printf("programs and state\n");

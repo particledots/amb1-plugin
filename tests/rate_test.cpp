@@ -8,8 +8,11 @@
 //   ./rate_test
 #include <cmath>
 #include <cstdio>
+#include <array>
+#include <string>
 #include <vector>
 #include "AmbCore.h"
+#include "GardenState.h"
 
 static const double kPi = 3.14159265358979323846;
 static bool gOk = true;
@@ -288,10 +291,99 @@ static void coreTests()
     }
 }
 
+// The snapshot the editor draws from: does it follow the engine, and is it sane while the garden plays?
+static void gardenTests()
+{
+    printf("garden state (what the editor shows)\n");
+    const int lv[4] = {100, 100, 100, 100};
+    {
+        const GardenState c = GardenState::capture(false, 0, MODE_IONIAN, lv);
+        const GardenState d = GardenState::capture(false, 2, MODE_IONIAN, lv);
+        char t[96];
+        snprintf(t, sizeof t, "(C Ionian 0x%03X, D Ionian 0x%03X; want 0xAB5, 0xAD6)", c.pool, d.pool);
+        report("the scale is the mode's pool turned to the root", c.pool == 0xAB5u && d.pool == 0xAD6u, t);
+        report("not live (another instance owns the engine): nothing else is shown", !c.live && !c.playing && c.chord == 0 &&
+               c.chordName[0] == 0 && c.levels[0] == 0.0f);
+    }
+    AmbCore core;
+    core.acquire();
+    AmbControls c = controlsFor(0);
+    // en_init() does not clear the engine's frozen flag, and an earlier test left it set: thaw it by hand so this
+    // test starts from a plain garden. (A real re-prepare with Freeze off has the same carry-over: noted in the status file.)
+    core.prepare(48000.0, c);
+    en_freeze(0);   // (after prepare: en_init() empties the command queue)
+    std::vector<float> L(480), R(480);
+    bool nameOk = true, chordOk = true, rangeOk = true, posMoved = false, glowSeen = false, meterSeen = false, notesSeen = false,
+         hitsSeen = false, playing = true;
+    float maxDrift = 0.0f;
+    int lastPos = -1;
+    char first[16] = "";
+    const int lv2[4] = {c.par[P_PAD], c.par[P_BELLS], c.par[P_BASS], c.par[P_PULSE]};
+    // look every 50 ms, like the editor does (the glow of a bell fades in well under a second)
+    for (int step = 0; step < 1800; ++step)
+    {
+        for (int i = 0; i < 5; ++i)
+        {
+            core.apply(c);
+            core.render(L.data(), R.data(), 480, 1.0f);
+        }
+        const GardenState g = GardenState::capture(true, c.par[P_ROOT], c.par[P_MODE], lv2);
+        if (step == 0)
+            snprintf(first, sizeof first, "%s", g.chordName);
+        playing = playing && g.playing;
+        nameOk = nameOk && g.chordName[0] >= 'A' && g.chordName[0] <= 'G';
+        const int n = __builtin_popcount(g.chord);
+        chordOk = chordOk && n >= 3 && n <= 4;
+        maxDrift = std::max(maxDrift, g.drift);
+        for (int l = 0; l < EN_NLOOP; ++l)
+        {
+            rangeOk = rangeOk && g.loopPos[(size_t)l] >= 0 && g.loopPos[(size_t)l] < EN_LOOP_LEN[l];
+            for (int i = 0; i < EN_LOOP_LEN[l]; ++i)
+                notesSeen = notesSeen || g.loopHasNote[(size_t)l][(size_t)i];
+            glowSeen = glowSeen || g.loopGlow[(size_t)l] > 0.2f;
+        }
+        if (lastPos >= 0 && g.loopPos[0] != lastPos)
+            posMoved = true;
+        lastPos = g.loopPos[0];
+        for (int d = 0; d < EN_NDRUM; ++d)
+            hitsSeen = hitsSeen || g.drumPat[(size_t)d] != 0;
+        for (float v : g.levels)
+        {
+            rangeOk = rangeOk && v >= 0.0f && v <= 1.0f;
+            meterSeen = meterSeen || v > 0.05f;
+        }
+    }
+    char d[96];
+    snprintf(d, sizeof d, "(first chord \"%s\", max drift %.2f in 90 s)", first, maxDrift);
+    report("live: playing, with a named 3- or 4-note chord, the whole time", playing && nameOk && chordOk, d);
+    report("loops hold notes, playheads move, positions stay inside their loops", notesSeen && posMoved && rangeOk);
+    report("bells glow, meters move, the pulse has hits, drift advances", glowSeen && meterSeen && hitsSeen && maxDrift > 0.02f);
+
+    c.freeze = true;
+    core.apply(c);
+    core.render(L.data(), R.data(), 480, 1.0f);
+    const int lvl[4] = {c.par[P_PAD], c.par[P_BELLS], c.par[P_BASS], c.par[P_PULSE]};
+    const GardenState f0 = GardenState::capture(true, c.par[P_ROOT], c.par[P_MODE], lvl);
+    for (int i = 0; i < 1000; ++i)
+    {
+        core.apply(c);
+        core.render(L.data(), R.data(), 480, 1.0f);
+    }
+    const GardenState f1 = GardenState::capture(true, c.par[P_ROOT], c.par[P_MODE], lvl);
+    report("frozen: the snapshot says so and the chord holds for 10 s", f0.frozen && f1.frozen && f0.chord == f1.chord &&
+           std::string(f0.chordName) == f1.chordName);
+    c.freeze = false;
+    c.play = false;
+    core.apply(c);
+    core.render(L.data(), R.data(), 480, 1.0f);
+    report("resting: the snapshot says not playing", !GardenState::capture(true, 0, 0, lvl).playing);
+}
+
 int main()
 {
     resamplerTests();
     coreTests();
+    gardenTests();
     printf(gOk ? "PASS\n" : "FAIL\n");
     return gOk ? 0 : 1;
 }

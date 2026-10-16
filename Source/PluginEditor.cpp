@@ -4,7 +4,7 @@
 namespace
 {
 constexpr int kDesignW = 860;   // the size the editor opens at; layout and type scale from it
-constexpr int kDesignH = 600;
+constexpr int kDesignH = 780;   // = the old 600 plus the 160 px garden panel and its gap
 } // namespace
 
 //==============================================================================
@@ -102,6 +102,7 @@ AmbEditor::AmbEditor(AmbProcessor& p) : juce::AudioProcessorEditor(p), proc_(p)
     banner_.setColour(juce::Label::textColourId, juce::Colours::white);
     banner_.setMinimumHorizontalScale(1.0f);
     addChildComponent(banner_);
+    addAndMakeVisible(garden_);
 
     // --- header: piece menu, Play / Freeze / Next chord, Master ---
     pieceCaption_.setText("Piece", juce::dontSendNotification);
@@ -149,7 +150,7 @@ AmbEditor::AmbEditor(AmbProcessor& p) : juce::AudioProcessorEditor(p), proc_(p)
     addGroup("Bass line", {"bassoct", "glide", "fifth"});
     addGroup("Rhythm", {"swing", "hats"});
 
-    setResizeLimits(560, 400, 1600, 1000);
+    setResizeLimits(600, 500, 1600, 1250);
     setResizable(true, true);
     setSize(kDesignW, kDesignH);
     startTimerHz(10);
@@ -312,6 +313,10 @@ void AmbEditor::resized()
     }
 
     footerArea_ = area.removeFromBottom(18.0f * s);
+    area.removeFromTop(8.0f * s);
+
+    // --- the garden panel, full width, under the header ---
+    garden_.setBounds(area.removeFromTop(160.0f * s).toNearestInt());
     area.removeFromTop(8.0f * s);
 
     // --- the groups: three rows; in a row, a group's width follows its number of controls ---

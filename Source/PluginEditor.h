@@ -1,11 +1,12 @@
 // SPDX-License-Identifier: GPL-3.0-only
-// The AMB-1 editor: grouped controls, a piece (preset) menu, Play / Freeze / Next chord, Master. Resizable.
+// The AMB-1 editor: a live garden display across the top, then grouped controls, a piece (preset) menu, Play / Freeze / Next chord, Master. Resizable.
 // Every control is attached to a host parameter by id, so automation and saved state are untouched.
 #pragma once
 #include <atomic>
 #include <memory>
 #include <vector>
 #include <juce_audio_processors/juce_audio_processors.h>
+#include "GardenView.h"
 #include "PluginProcessor.h"
 
 // Dark, flat look. Knobs are drawn here; everything else is JUCE's V4 look with colours and fonts set.
@@ -80,6 +81,7 @@ private:
     Control* tempoControl_ = nullptr;           // the Tempo knob: dimmed while synced, since it is ignored then
 
     juce::Label banner_;
+    GardenView garden_{proc_};   // the live picture across the top (below the header)
     juce::Label pieceCaption_;
     juce::ComboBox pieceMenu_;
     juce::TextButton playButton_{"Play"}, freezeButton_{"Freeze"}, nextButton_{"Next chord"};

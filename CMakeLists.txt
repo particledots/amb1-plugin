@@ -8,7 +8,7 @@ endif()
 
 # The version is the plugin's version in the host. Raise it with every release: macOS and Logic cache a
 # plugin's name and details and only refresh them when the installed file's version goes up.
-project(AMB1 VERSION 0.3.0 LANGUAGES C CXX)
+project(AMB1 VERSION 0.4.0 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -27,7 +27,7 @@ target_compile_options(amb_engine PRIVATE -ffp-contract=off)
 set_target_properties(amb_engine PROPERTIES C_STANDARD 99 C_EXTENSIONS ON POSITION_INDEPENDENT_CODE ON)
 
 # The JUCE-free glue: parameter diffing, the 44.1 kHz engine, the resampler.
-add_library(amb1_core STATIC Source/AmbCore.cpp)
+add_library(amb1_core STATIC Source/AmbCore.cpp Source/GardenState.cpp)
 target_link_libraries(amb1_core PUBLIC amb_engine)
 set_target_properties(amb1_core PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
@@ -72,14 +72,15 @@ juce_add_plugin(AMB1
 
 target_sources(AMB1 PRIVATE
   Source/PluginProcessor.cpp Source/PluginProcessor.h
-  Source/PluginEditor.cpp Source/PluginEditor.h)
+  Source/PluginEditor.cpp Source/PluginEditor.h
+  Source/GardenView.cpp Source/GardenView.h)
 target_compile_definitions(AMB1 PUBLIC JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0 JUCE_VST3_CAN_REPLACE_VST2=0)
 target_link_libraries(AMB1 PRIVATE amb1_core
   juce::juce_audio_utils juce::juce_audio_processors
   PUBLIC juce::juce_recommended_config_flags juce::juce_recommended_lto_flags juce::juce_recommended_warning_flags)
 
 # Headless test that drives the actual plugin object (processBlock, programs, state, parameter ids)
-add_executable(plugin_test tests/plugin_test.cpp Source/PluginProcessor.cpp Source/PluginEditor.cpp)
+add_executable(plugin_test tests/plugin_test.cpp Source/PluginProcessor.cpp Source/PluginEditor.cpp Source/GardenView.cpp)
 target_include_directories(plugin_test PRIVATE Source)
 target_compile_definitions(plugin_test PRIVATE JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0)
 target_link_libraries(plugin_test PRIVATE amb1_core juce::juce_audio_processors juce::juce_recommended_config_flags)

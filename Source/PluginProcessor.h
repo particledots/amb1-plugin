@@ -39,6 +39,8 @@ public:
     // The engine is a process-wide singleton, so only one AMB-1 can sound at a time in this version.
     // True when this instance asked for the engine and another instance already had it.
     bool isBlockedByAnotherInstance() const noexcept { return blocked_.load(); }
+    // True when this instance owns the engine right now, so the engine's state (the garden display) is its own.
+    bool ownsEngine() const noexcept { return core_.isActive(); }
 
     // Host parameter id for an engine parameter (the engine's P_* enum); nullptr for P_MIDI (not exposed).
     static const char* engineParamId(int engineParam);
