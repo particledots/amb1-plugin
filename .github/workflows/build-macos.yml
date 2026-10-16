@@ -1,0 +1,99 @@
+name: build-macos
+
+# Builds the AU and VST3 as universal (Apple silicon + Intel) binaries, runs the headless tests, and uploads a
+# zip you can download from the run's page (Actions tab > the run > Artifacts). Modeled on build-wt8-macos in
+# particledots/CHOMPI.
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  build:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+
+      - name: Architecture and deployment-target settings
+        run: grep -E 'CMAKE_OSX_(ARCHITECTURES|DEPLOYMENT_TARGET)' build/CMakeCache.txt
+
+      - name: Build the headless tests
+        run: cmake --build build --config Release --target render_test rate_test plugin_test -j 4
+
+      - name: "render_test, twice (two fresh processes must print identical output)"
+        run: |
+          ./build/render_test 20 | tee build/render1.txt
+          ./build/render_test 20 > build/render2.txt
+          diff build/render1.txt build/render2.txt
+
+      - name: rate_test
+        run: ./build/rate_test
+
+      - name: plugin_test
+        run: ./build/plugin_test
+
+      - name: Build the plugins
+        run: cmake --build build --config Release --target AMB1_AU AMB1_VST3 -j 4
+
+      - name: Verify universal binaries and minimum macOS
+        run: |
+          set -e
+          found=0
+          for bundle in $(find build -type d \( -name 'AMB-1.component' -o -name 'AMB-1.vst3' \) -not -path '*/dist/*'); do
+            bin="$bundle/Contents/MacOS/AMB-1"
+            archs=$(lipo -archs "$bin")
+            echo "$bundle: $archs"
+            otool -arch all -l "$bin" | grep -A4 -E 'LC_BUILD_VERSION|LC_VERSION_MIN' | grep -E 'cmd|minos|version' || true
+            case "$archs" in *arm64*) ;; *) echo "missing arm64"; exit 1;; esac
+            case "$archs" in *x86_64*) ;; *) echo "missing x86_64"; exit 1;; esac
+            found=$((found+1))
+          done
+          test "$found" -ge 2
+
+      - name: Ad-hoc sign and package
+        run: |
+          set -e
+          mkdir -p dist
+          for bundle in $(find build -type d \( -name 'AMB-1.component' -o -name 'AMB-1.vst3' \)); do
+            codesign --force --deep -s - "$bundle"
+            ditto "$bundle" "dist/$(basename "$bundle")"
+          done
+          cp LICENSE THIRD_PARTY.md dist/
+          cat > dist/INSTALL.txt <<'EOF'
+          AMB-1 (unofficial plugin port) - install
+          1. Copy AMB-1.component to  ~/Library/Audio/Plug-Ins/Components/
+             Copy AMB-1.vst3      to  ~/Library/Audio/Plug-Ins/VST3/
+          2. In Terminal, clear the download quarantine flag:
+               xattr -dr com.apple.quarantine ~/Library/Audio/Plug-Ins/Components/AMB-1.component
+               xattr -dr com.apple.quarantine ~/Library/Audio/Plug-Ins/VST3/AMB-1.vst3
+          3. Restart Logic Pro. If it is not listed: Logic Pro > Settings > Plug-in Manager, select AMB-1, Reset & Rescan Selection.
+          4. Software Instrument track > Instrument slot > Audio Units > particledots > AMB-1.
+          Only one AMB-1 can sound at a time in this version.
+          EOF
+          ditto -c -k --sequesterRsrc dist amb1-macos.zip
+          ls -la dist amb1-macos.zip
+
+      - name: auval (informational; does not fail the build)
+        continue-on-error: true
+        run: |
+          mkdir -p ~/Library/Audio/Plug-Ins/Components
+          rm -rf ~/Library/Audio/Plug-Ins/Components/AMB-1.component
+          ditto dist/AMB-1.component ~/Library/Audio/Plug-Ins/Components/AMB-1.component
+          killall -9 AudioComponentRegistrar 2>/dev/null || true
+          sleep 3
+          auval -a | grep -i -E 'Amb1|Ptdt' || echo "AMB-1 not listed by auval -a"
+          auval -v aumu Amb1 Ptdt 2>&1 | tee build/auval.txt | tail -40
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: amb1-macos
+          path: |
+            amb1-macos.zip
+            build/auval.txt
+            build/render1.txt
+          if-no-files-found: warn
