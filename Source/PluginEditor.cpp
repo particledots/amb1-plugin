@@ -37,6 +37,10 @@ AmbLookAndFeel::AmbLookAndFeel()
     setColour(juce::TextEditor::backgroundColourId, juce::Colour(0xff1d2530));
     setColour(juce::TextEditor::textColourId, text());
     setColour(juce::TextEditor::outlineColourId, cardEdge());
+
+    setColour(juce::TooltipWindow::backgroundColourId, juce::Colour(0xff1d2530));
+    setColour(juce::TooltipWindow::textColourId, text());
+    setColour(juce::TooltipWindow::outlineColourId, accent().darker(0.4f));
 }
 
 void AmbLookAndFeel::drawRotarySlider(juce::Graphics& g, int x, int y, int width, int height, float pos,
@@ -123,6 +127,9 @@ AmbEditor::AmbEditor(AmbProcessor& p) : juce::AudioProcessorEditor(p), proc_(p)
     playAtt_ = std::make_unique<ButtonAtt>(proc_.apvts, "play", playButton_);
     freezeAtt_ = std::make_unique<ButtonAtt>(proc_.apvts, "freeze", freezeButton_);
     nextAtt_ = std::make_unique<ButtonAtt>(proc_.apvts, "next", nextButton_);
+    nextButton_.setTooltip("Ask for the next chord. It arrives on the next bar (at once while resting) instead of "
+                           "waiting for Drift. Each click asks once.");
+    syncRaw_ = proc_.apvts.getRawParameterValue("sync");
 
     masterCaption_.setText("Master dB", juce::dontSendNotification);
     masterCaption_.setColour(juce::Label::textColourId, AmbLookAndFeel::dim());
@@ -138,7 +145,7 @@ AmbEditor::AmbEditor(AmbProcessor& p) : juce::AudioProcessorEditor(p), proc_(p)
     addGroup("Motion", {"density", "evolve", "drift", "hits", "motion"});
     addGroup("Space", {"echo", "etime", "reverb", "size"});
     addGroup("Tone", {"bright", "swell", "btone", "padtone"});
-    addGroup("Key & tempo", {"root", "mode", "tempo", "tune", "boct"});
+    addGroup("Key & tempo", {"root", "mode", "tempo", "sync", "tune", "boct"});
     addGroup("Bass line", {"bassoct", "glide", "fifth"});
     addGroup("Rhythm", {"swing", "hats"});
 
@@ -168,6 +175,7 @@ void AmbEditor::addGroup(const char* title, std::initializer_list<const char*> i
             continue;
 
         auto c = std::make_unique<Control>();
+        c->id = id;
         c->caption.setText(param->getName(24), juce::dontSendNotification);
         c->caption.setJustificationType(juce::Justification::centred);
         c->caption.setColour(juce::Label::textColourId, AmbLookAndFeel::dim());
@@ -186,6 +194,15 @@ void AmbEditor::addGroup(const char* title, std::initializer_list<const char*> i
             addAndMakeVisible(c->menu);
             c->menuAtt = std::make_unique<ComboAtt>(proc_.apvts, id, c->menu);
         }
+        else if (dynamic_cast<juce::AudioParameterBool*>(param) != nullptr)
+        {
+            c->isButton = true;
+            c->button.setClickingTogglesState(true);   // lit while on
+            c->button.setTooltip("Follow the host's tempo instead of the Tempo knob (the knob is dimmed while this "
+                                 "is on). The garden keeps playing whether or not the host is running.");
+            addAndMakeVisible(c->button);
+            c->buttonAtt = std::make_unique<ButtonAtt>(proc_.apvts, id, c->button);
+        }
         else
         {
             c->knob.setSliderStyle(juce::Slider::RotaryHorizontalVerticalDrag);
@@ -195,6 +212,8 @@ void AmbEditor::addGroup(const char* title, std::initializer_list<const char*> i
             addAndMakeVisible(c->knob);
             c->knobAtt = std::make_unique<SliderAtt>(proc_.apvts, id, c->knob);   // double-click: back to default
         }
+        if (c->id == "tempo")
+            tempoControl_ = c.get();   // (the Control lives on in the group; moving the pointer does not move it)
         group->controls.push_back(std::move(c));
     }
     groups_.push_back(std::move(group));
@@ -208,6 +227,9 @@ void AmbEditor::timerCallback()
         banner_.setVisible(blocked);
         resized();
     }
+    // while Tempo sync is on, the Tempo knob is ignored: show it
+    if (tempoControl_ != nullptr && syncRaw_ != nullptr)
+        tempoControl_->knob.setEnabled(syncRaw_->load() < 0.5f);
     // the host can change the piece (program change, a loaded project): follow it
     const int program = proc_.getCurrentProgram();
     if (pieceMenu_.getSelectedItemIndex() != program)
@@ -331,10 +353,14 @@ void AmbEditor::resized()
                 cellX += cellW;
                 c.caption.setBounds(cell.removeFromTop(18.0f * s).toNearestInt());
                 c.caption.setFont(juce::Font(juce::FontOptions(12.0f * s)));
-                if (c.isChoice)
+                if (c.isChoice || c.isButton)
                 {
                     const float mw = juce::jmax(40.0f, cell.getWidth() - 8.0f * s);
-                    c.menu.setBounds(cell.withSizeKeepingCentre(mw, 28.0f * s).toNearestInt());
+                    const auto box = cell.withSizeKeepingCentre(mw, 28.0f * s).toNearestInt();
+                    if (c.isButton)
+                        c.button.setBounds(box);
+                    else
+                        c.menu.setBounds(box);
                 }
                 else
                 {

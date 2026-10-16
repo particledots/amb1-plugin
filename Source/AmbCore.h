@@ -19,6 +19,7 @@ struct AmbControls
     bool play = true;
     bool freeze = false;
     bool nextToggle = false;   // every change of this flag asks for the next chord
+    bool syncToHost = false;   // follow the host's tempo (see AmbCore::setHostTempo) instead of the Tempo parameter
     AmbControls();             // engine defaults
 };
 
@@ -43,6 +44,9 @@ public:
     void apply(const AmbControls& c);
     // A new piece: fresh loops, the home chord. Safe from any thread; done at the next render().
     void requestRegrow() { regrow_.store(true, std::memory_order_release); }
+    // The host's tempo in beats per minute, from the audio thread before apply(). A value that is not a plausible
+    // tempo (0 = the host did not say) is ignored, so the last good one stays in use.
+    void setHostTempo(double bpm);
     // Render n frames at the host rate, with a linear gain ramp from the previous block's gain.
     void render(float* l, float* r, int n, float gain);
 
@@ -54,6 +58,11 @@ private:
     bool lastPlay_ = false, lastFreeze_ = false, lastNext_ = false;
     std::atomic<bool> regrow_{false};
     float lastGain_ = 1.0f;
+    // Tempo sync: while on, the engine's clock is driven by MIDI-clock-style ticks (24 per beat) made from the
+    // host's tempo. Ticks are counted in engine frames (44.1 kHz), not host frames.
+    bool sync_ = false;
+    double hostBpm_ = 0.0;         // last plausible host tempo; 0 = never heard one
+    double tickCountdown_ = 0.0;   // engine frames until the next tick
     int32_t tmp_[2 * Resampler::kChunk]{};
 
     static std::atomic<const AmbCore*> owner_;

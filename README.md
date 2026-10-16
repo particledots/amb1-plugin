@@ -12,20 +12,23 @@ a plate reverb. It plays itself; you tend it.
 
 ## Status: v0.1, first scaffold
 
-What works (headless-tested; not yet heard in Logic):
+What works (headless-tested, and tried in Logic Pro on an Intel Mac; not yet tried on Apple silicon):
 
 - AU instrument and VST3, universal (arm64 + x86_64), minimum macOS 11.
-- All 27 engine parameters, plus Play, Freeze, Next chord and Master, as host parameters.
+- All 27 engine parameters, plus Play, Freeze, Next chord, Master and Tempo sync, as host parameters.
 - The eight pieces as programs (factory presets): Garden, Departures, Voices, Afternoon, Night Bus,
   Shoreline, Glass, Tides.
 - Any host sample rate: the engine runs at 44.1 kHz and is resampled.
-- Plain parameter editor.
+- A grouped, resizable editor: knobs, a piece menu, Play / Freeze / Next chord, Master, and tooltips.
+- Optional tempo sync (off by default): the garden follows the host's tempo instead of its own Tempo parameter.
 
 Known limits of this version:
 
 - **One AMB-1 at a time.** The engine keeps its state in file-level statics, so a second instance is silent
   (the editor says so).
-- **Free-running.** The tempo is its own (a parameter), not Logic's, and the garden does not follow the transport.
+- **Free-running.** The garden keeps playing whether or not the host is running, and does not follow its transport
+  or bar position. With Tempo sync on it takes the host's tempo only (the engine's own tempo range is 30 to 120 bpm,
+  which the echo times and swing use even if the host is faster or slower).
 - **Not repeatable between runs.** The engine's random generator is not reset when the plugin starts.
 - No MIDI in or out yet; the scale is set by Mode and Root.
 - Not code-signed or notarized (ad-hoc signed only).

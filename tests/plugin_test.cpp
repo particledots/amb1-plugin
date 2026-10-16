@@ -70,12 +70,12 @@ int main()
         const std::vector<std::string> expected = {
             "pad", "bells", "bass", "pulse", "density", "evolve", "drift", "hits", "echo", "etime", "reverb", "size",
             "bright", "swell", "btone", "motion", "tune", "tempo", "root", "mode", "boct", "padtone", "bassoct",
-            "glide", "fifth", "swing", "hats", "play", "freeze", "next", "master"};
+            "glide", "fifth", "swing", "hats", "play", "freeze", "next", "master", "sync"};
         std::vector<std::string> got;
         for (auto* prm : p.getParameters())
             if (auto* withId = dynamic_cast<juce::AudioProcessorParameterWithID*>(prm))
                 got.push_back(withId->paramID.toStdString());
-        report("31 parameters with the expected ids, in order (saved projects depend on them)", got == expected,
+        report("32 parameters with the expected ids, in order (saved projects depend on them)", got == expected,
                "(" + std::to_string(got.size()) + " found)");
         report("eight programs, named after the pieces", p.getNumPrograms() == 8 &&
                p.getProgramName(0) == "Garden" && p.getProgramName(7) == "Tides");
@@ -159,6 +159,72 @@ int main()
             q.setStateInformation(junk, (int)sizeof junk);
             return getValue(q, "tempo") == 100.0f;
         }());
+    }
+
+    printf("tempo sync\n");
+    {
+        // A stand-in for the host's playhead that reports a fixed tempo.
+        struct FixedHead : juce::AudioPlayHead
+        {
+            double bpm = 120.0;
+            juce::Optional<PositionInfo> getPosition() const override
+            {
+                PositionInfo info;
+                info.setBpm(bpm);
+                return info;
+            }
+        } head;
+
+        AmbProcessor p;
+        start(p, 48000.0, 512);
+        p.setPlayHead(&head);
+        report("tempo sync is off by default", getValue(p, "sync") == 0.0f);
+
+        // sixteenths the engine plays in 20 s (the Garden is 72 bpm: about 96; at the host's 120 bpm: about 160)
+        auto sixteenths = [&] {
+            run(p, 2.0, 48000.0, 512);   // settle
+            const uint32_t before = en_bars;
+            run(p, 20.0, 48000.0, 512);
+            return (int)(en_bars - before);
+        };
+        const int free = sixteenths();
+        setValue(p, "sync", 1.0f);
+        const int synced = sixteenths();
+        setValue(p, "sync", 0.0f);
+        const int back = sixteenths();
+        char d[96];
+        snprintf(d, sizeof d, "(%d / %d / %d sixteenths in 20 s; want 96 / 160 / 96)", free, synced, back);
+        report("off: its own tempo; on: the host's 120 bpm; off again: its own", std::abs(free - 96) <= 3 &&
+               std::abs(synced - 160) <= 3 && std::abs(back - 96) <= 3, d);
+        p.releaseResources();
+    }
+    {
+        AmbProcessor a;
+        setValue(a, "sync", 1.0f);
+        juce::MemoryBlock saved;
+        a.getStateInformation(saved);
+        AmbProcessor b;
+        b.setStateInformation(saved.getData(), (int)saved.getSize());
+        report("a saved state keeps Tempo sync on", getValue(b, "sync") == 1.0f);
+
+        // A state written before Tempo sync existed: the same state with the "sync" entry taken out. It must load
+        // with sync off, even into an instance that has it on right now.
+        AmbProcessor fresh;
+        juce::MemoryBlock blob;
+        fresh.getStateInformation(blob);
+        auto xml = juce::AudioProcessor::getXmlFromBinary(blob.getData(), (int)blob.getSize());
+        bool removed = false;
+        if (xml != nullptr)
+            if (auto* child = xml->getChildByAttribute("id", "sync"))
+            {
+                xml->removeChildElement(child, true);
+                removed = true;
+            }
+        juce::MemoryBlock old;
+        if (xml != nullptr)
+            juce::AudioProcessor::copyXmlToBinary(*xml, old);
+        b.setStateInformation(old.getData(), (int)old.getSize());
+        report("a project saved before Tempo sync existed loads with it off", removed && getValue(b, "sync") == 0.0f);
     }
 
     printf(gOk ? "PASS\n" : "FAIL\n");

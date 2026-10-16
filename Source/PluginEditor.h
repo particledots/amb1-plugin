@@ -2,6 +2,7 @@
 // The AMB-1 editor: grouped controls, a piece (preset) menu, Play / Freeze / Next chord, Master. Resizable.
 // Every control is attached to a host parameter by id, so automation and saved state are untouched.
 #pragma once
+#include <atomic>
 #include <memory>
 #include <vector>
 #include <juce_audio_processors/juce_audio_processors.h>
@@ -44,17 +45,21 @@ private:
     using ComboAtt = juce::AudioProcessorValueTreeState::ComboBoxAttachment;
     using ButtonAtt = juce::AudioProcessorValueTreeState::ButtonAttachment;
 
-    // One engine parameter: a caption and either a knob or (for a list of named choices) a menu.
+    // One parameter: a caption and a knob, or (for a list of named choices) a menu, or (for an on/off one) a button.
     // The attachments are declared last so they are destroyed before the components they drive.
     struct Control
     {
+        juce::String id;
         bool isChoice = false;
+        bool isButton = false;
         float weight = 1.0f;   // its share of the group's width: a menu with longer choices gets more
         juce::Label caption;
         juce::Slider knob;
         juce::ComboBox menu;
+        juce::TextButton button{"Host"};
         std::unique_ptr<SliderAtt> knobAtt;
         std::unique_ptr<ComboAtt> menuAtt;
+        std::unique_ptr<ButtonAtt> buttonAtt;
     };
 
     struct Group
@@ -70,6 +75,9 @@ private:
     AmbProcessor& proc_;
     AmbLookAndFeel laf_;   // first member: it must outlive every component that uses it
     float scale_ = 1.0f;
+    juce::TooltipWindow tooltips_{this, 600};   // shows the text set with setTooltip() after the mouse rests
+    std::atomic<float>* syncRaw_ = nullptr;     // the Tempo sync parameter's value
+    Control* tempoControl_ = nullptr;           // the Tempo knob: dimmed while synced, since it is ignored then
 
     juce::Label banner_;
     juce::Label pieceCaption_;

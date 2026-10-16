@@ -2,6 +2,7 @@
 #include "AmbCore.h"
 #include <algorithm>
 #include <climits>
+#include <cmath>
 
 std::atomic<const AmbCore*> AmbCore::owner_{nullptr};
 
@@ -34,6 +35,8 @@ void AmbCore::prepare(double hostRate, const AmbControls& c)
     resampler_.prepare((double)EN_SR, hostRate);
     lastGain_ = 1.0f;
     regrow_.store(false);
+    sync_ = false;
+    tickCountdown_ = 0.0;
 
     en_init();
     en_set(P_MIDI, 0);   // MIDI out is a no-op in the plugin; keep the engine from generating it
@@ -54,14 +57,29 @@ void AmbCore::prepare(double hostRate, const AmbControls& c)
     }
 }
 
+void AmbCore::setHostTempo(double bpm)
+{
+    if (bpm >= 20.0 && bpm <= 400.0)
+        hostBpm_ = bpm;
+}
+
 void AmbCore::apply(const AmbControls& c)
 {
+    if (c.syncToHost && !sync_)
+        tickCountdown_ = 0.0;   // turning sync on: the first tick comes at once
+    sync_ = c.syncToHost;
+
     for (int i = 0; i < P_NPARAMS; ++i)
     {
         if (i == P_MIDI)
             continue;
         const en_param_t* info = en_param_info(i);
-        const int v = std::clamp(c.par[(size_t)i], (int)info->lo, (int)info->hi);
+        int want = c.par[(size_t)i];
+        // While synced, the engine's Tempo follows the host (clamped to the engine's own 30..120 range): the
+        // clock ticks set the grid, but the echo times and the swing are worked out from this value.
+        if (i == P_TEMPO && sync_ && hostBpm_ > 0.0)
+            want = (int)std::lround(hostBpm_);
+        const int v = std::clamp(want, (int)info->lo, (int)info->hi);
         if (v != last_[(size_t)i])
         {
             en_set(i, v);
@@ -91,6 +109,19 @@ void AmbCore::apply(const AmbControls& c)
 
 void AmbCore::engineChunk(float* l, float* r, int count)
 {
+    if (sync_ && hostBpm_ > 0.0)
+    {
+        // 24 ticks per beat, as a MIDI clock. The engine takes its commands at the start of each render call,
+        // so a tick lands at the start of the chunk it falls in: at most one chunk (128 frames, 2.9 ms) early.
+        // While ticks keep coming the engine follows them; a few chunks after they stop it goes back to its own tempo.
+        const double framesPerTick = (double)EN_SR * 60.0 / (hostBpm_ * 24.0);
+        while (tickCountdown_ < (double)count)
+        {
+            en_clock(EN_CLK_TICK);
+            tickCountdown_ += framesPerTick;
+        }
+        tickCountdown_ -= (double)count;
+    }
     en_render(tmp_, (uint32_t)count, kEngineGainQ12);
     constexpr float k = 1.0f / 8388608.0f;   // 24-bit in int32
     for (int i = 0; i < count; ++i)

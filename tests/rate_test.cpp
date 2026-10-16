@@ -151,6 +151,116 @@ static void coreTests()
         report("same tempo at 44.1 / 48 / 96 kHz: sixteenths in 30 s agree", same, d);
     }
 
+    printf("tempo sync\n");
+    {
+        // Sixteenths over `secs` seconds. The host tempo is reported before every block, as the plugin does.
+        struct Run
+        {
+            AmbCore core;
+            AmbControls c = controlsFor(0);   // Garden: 72 bpm, so 4.8 sixteenths a second on its own
+            double sr;
+            int block;
+            std::vector<float> L, R;
+            explicit Run(double rate) : sr(rate), block(rate == 48000.0 ? 480 : 512), L((size_t)block), R((size_t)block)
+            {
+                core.acquire();
+                core.prepare(sr, c);
+            }
+            uint32_t go(double secs, double bpm)
+            {
+                core.apply(c);
+                core.render(L.data(), R.data(), block, 1.0f);
+                const uint32_t base = en_bars;
+                for (long n = 0; n < (long)(secs * sr); n += block)
+                {
+                    core.setHostTempo(bpm);
+                    core.apply(c);
+                    core.render(L.data(), R.data(), block, 1.0f);
+                }
+                return en_bars - base;
+            }
+        };
+        auto near = [](uint32_t got, int want, int tol) { return std::abs((int)got - want) <= tol; };
+        char d[96];
+
+        for (double sr : {44100.0, 48000.0, 96000.0})
+        {
+            Run run(sr);
+            run.go(3.0, 0.0);   // sync off: the host's tempo is ignored
+            const uint32_t off = run.go(20.0, 120.0);
+            run.c.syncToHost = true;
+            run.go(2.0, 120.0);   // settle
+            const uint32_t at120 = run.go(20.0, 120.0);
+            const uint32_t at90 = run.go(20.0, 90.0);
+            char what[96];
+            snprintf(what, sizeof what, "%.1f kHz host: off ignores the host tempo, sync follows it", sr / 1000.0);
+            snprintf(d, sizeof d, "(off %u, 120 bpm %u, 90 bpm %u; want 96 / 160 / 120)", (unsigned)off, (unsigned)at120, (unsigned)at90);
+            report(what, near(off, 96, 2) && near(at120, 160, 2) && near(at90, 120, 2), d);
+        }
+        {
+            Run run(48000.0);
+            run.c.syncToHost = true;
+            const uint32_t unknown = run.go(20.0, 0.0);   // host never gives a tempo: stays on its own
+            snprintf(d, sizeof d, "(%u sixteenths in 20 s; want 96)", (unsigned)unknown);
+            report("sync on but no host tempo yet: keeps the Tempo parameter's tempo", near(unknown, 96, 2), d);
+        }
+        {
+            Run run(48000.0);
+            run.c.syncToHost = true;
+            run.go(2.0, 100.0);
+            const uint32_t held = run.go(20.0, 0.0);   // the host stops reporting: the last tempo is kept
+            snprintf(d, sizeof d, "(%u sixteenths in 20 s; want 133 at 100 bpm)", (unsigned)held);
+            report("host stops reporting a tempo: the last one is kept", near(held, 133, 2), d);
+        }
+        {
+            Run run(44100.0);
+            run.c.syncToHost = true;
+            run.go(2.0, 120.0);
+            run.c.syncToHost = false;
+            run.go(2.0, 120.0);   // the engine takes a few chunks to notice the ticks stopped
+            const uint32_t back = run.go(20.0, 120.0);
+            snprintf(d, sizeof d, "(%u sixteenths in 20 s; want 96)", (unsigned)back);
+            report("sync switched off: back to the Tempo parameter's tempo", near(back, 96, 2), d);
+        }
+        {
+            Run run(48000.0);
+            run.c.syncToHost = true;
+            run.go(2.0, 60.0);
+            uint32_t total = 0;
+            for (double bpm : {60.0, 90.0, 120.0, 90.0})   // a tempo change every 5 s
+                total += run.go(5.0, bpm);
+            snprintf(d, sizeof d, "(%u sixteenths in 20 s; want 20 + 30 + 40 + 30 = 120)", (unsigned)total);
+            report("tempo changes while playing are followed", near(total, 120, 3), d);
+        }
+        {
+            // every sixteenth's length at 120 bpm should be ~125 ms: the spread of tick-to-tick timing is small
+            Run run(48000.0);
+            run.c.syncToHost = true;
+            run.go(2.0, 120.0);
+            std::vector<double> at;   // time (s) at which en_bars changed
+            uint32_t last = en_bars;
+            double t = 0;
+            for (long n = 0; n < (long)(20.0 * run.sr); n += run.block)
+            {
+                run.core.setHostTempo(120.0);
+                run.core.apply(run.c);
+                run.core.render(run.L.data(), run.R.data(), run.block, 1.0f);
+                t += (double)run.block / run.sr;
+                if (en_bars != last)
+                {
+                    at.push_back(t);
+                    last = en_bars;
+                }
+            }
+            double worst = 0;
+            for (size_t i = 1; i < at.size(); ++i)
+                worst = std::max(worst, std::fabs((at[i] - at[i - 1]) - 0.125));
+            snprintf(d, sizeof d, "(%zu steps seen; worst gap error %.1f ms, which includes the %.1f ms block size)", at.size(),
+                     worst * 1000.0, 1000.0 * run.block / run.sr);
+            report("sixteenths arrive evenly at 120 bpm (within one block)", at.size() > 100 && worst < (double)run.block / run.sr + 0.004, d);
+        }
+    }
+
     printf("ownership and transport\n");
     {
         AmbCore a, b;

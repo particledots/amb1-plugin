@@ -8,7 +8,7 @@ endif()
 
 # The version is the plugin's version in the host. Raise it with every release: macOS and Logic cache a
 # plugin's name and details and only refresh them when the installed file's version goes up.
-project(AMB1 VERSION 0.2.1 LANGUAGES C CXX)
+project(AMB1 VERSION 0.3.0 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)

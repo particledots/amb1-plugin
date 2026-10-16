@@ -57,6 +57,8 @@ juce::AudioProcessorValueTreeState::ParameterLayout AmbProcessor::createLayout()
     layout.add(std::make_unique<juce::AudioParameterFloat>(
         juce::ParameterID{"master", 1}, "Master", juce::NormalisableRange<float>(-48.0f, 6.0f, 0.1f), 0.0f,
         juce::AudioParameterFloatAttributes().withLabel("dB")));
+    // Added after the first release: appended, so every earlier id keeps its place. Off = the Tempo parameter rules.
+    layout.add(std::make_unique<juce::AudioParameterBool>(juce::ParameterID{"sync", 1}, "Tempo sync", false));
     return layout;
 }
 
@@ -70,6 +72,7 @@ AmbProcessor::AmbProcessor()
     rawFreeze_ = apvts.getRawParameterValue("freeze");
     rawNext_ = apvts.getRawParameterValue("next");
     rawMaster_ = apvts.getRawParameterValue("master");
+    rawSync_ = apvts.getRawParameterValue("sync");
 }
 
 AmbProcessor::~AmbProcessor() { core_.release(); }
@@ -88,6 +91,7 @@ void AmbProcessor::readControls(AmbControls& c) const
     c.play = rawPlay_->load() > 0.5f;
     c.freeze = rawFreeze_->load() > 0.5f;
     c.nextToggle = rawNext_->load() > 0.5f;
+    c.syncToHost = rawSync_->load() > 0.5f;
 }
 
 void AmbProcessor::prepareToPlay(double sampleRate, int)
@@ -125,6 +129,15 @@ void AmbProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuff
         buffer.clear();
         return;
     }
+    // The host's tempo, if it says (it can be unknown, and some hosts only give it while playing: the core
+    // keeps the last good value). Read every block; used only while Tempo sync is on.
+    double bpm = 0.0;
+    if (auto* head = getPlayHead())
+        if (const auto position = head->getPosition())
+            if (const auto hostBpm = position->getBpm())
+                bpm = *hostBpm;
+    core_.setHostTempo(bpm);
+
     AmbControls c;
     readControls(c);
     core_.apply(c);
@@ -182,7 +195,13 @@ void AmbProcessor::setStateInformation(const void* data, int sizeInBytes)
         {
             auto tree = juce::ValueTree::fromXml(*xml);
             currentProgram_.store(juce::jlimit(0, EN_NPIECES - 1, (int)tree.getProperty("program", 0)));
+            // A project saved before Tempo sync existed has no entry for it. JUCE would leave the parameter at
+            // whatever it holds now; such a project must come back exactly as it was saved: sync off.
+            const bool savedSync = tree.getChildWithProperty("id", "sync").isValid();
             apvts.replaceState(tree);
+            if (!savedSync)
+                if (auto* prm = apvts.getParameter("sync"))
+                    prm->setValueNotifyingHost(prm->getDefaultValue());
         }
     }
 }

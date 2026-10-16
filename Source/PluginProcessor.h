@@ -56,6 +56,7 @@ private:
     std::atomic<float>* rawFreeze_ = nullptr;
     std::atomic<float>* rawNext_ = nullptr;
     std::atomic<float>* rawMaster_ = nullptr;
+    std::atomic<float>* rawSync_ = nullptr;
     std::atomic<int> currentProgram_{0};
     std::atomic<bool> blocked_{false};
 
