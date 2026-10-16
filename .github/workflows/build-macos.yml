@@ -2,7 +2,7 @@ name: build-macos
 
 # Builds the AU and VST3 as universal (Apple silicon + Intel) binaries, runs the headless tests, and uploads a
 # zip you can download from the run's page (Actions tab > the run > Artifacts). Modeled on build-wt8-macos in
-# particledots/CHOMPI.
+# particledots/CHOMPI. Each step's result is also shown as an annotation on the run (see .github/scripts/annotate.sh).
 on:
   workflow_dispatch:
   push:
@@ -19,42 +19,70 @@ jobs:
         run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 
       - name: Architecture and deployment-target settings
-        run: grep -E 'CMAKE_OSX_(ARCHITECTURES|DEPLOYMENT_TARGET)' build/CMakeCache.txt
+        run: |
+          grep -E 'CMAKE_OSX_(ARCHITECTURES|DEPLOYMENT_TARGET)' build/CMakeCache.txt | tee build/settings.txt
+          bash .github/scripts/annotate.sh settings build/settings.txt 0
 
       - name: Build the headless tests
         run: cmake --build build --config Release --target render_test rate_test plugin_test -j 4
 
       - name: "render_test, twice (two fresh processes must print identical output)"
         run: |
-          ./build/render_test 20 | tee build/render1.txt
-          ./build/render_test 20 > build/render2.txt
-          diff build/render1.txt build/render2.txt
+          set +e
+          ./build/render_test 20 > build/render1.txt 2>&1; s1=$?
+          ./build/render_test 20 > build/render2.txt 2>&1; s2=$?
+          cat build/render1.txt
+          diff build/render1.txt build/render2.txt; sd=$?
+          status=$((s1 + s2 + sd))
+          bash .github/scripts/annotate.sh render_test build/render1.txt $status
+          exit $status
 
       - name: rate_test
-        run: ./build/rate_test
+        run: |
+          set +e
+          ./build/rate_test > build/rate_test.txt 2>&1; status=$?
+          cat build/rate_test.txt
+          bash .github/scripts/annotate.sh rate_test build/rate_test.txt $status
+          exit $status
 
       - name: plugin_test
-        run: ./build/plugin_test
+        run: |
+          set +e
+          ./build/plugin_test > build/plugin_test.txt 2>&1; status=$?
+          cat build/plugin_test.txt
+          bash .github/scripts/annotate.sh plugin_test build/plugin_test.txt $status
+          exit $status
 
       - name: Build the plugins
+        if: always()
         run: cmake --build build --config Release --target AMB1_AU AMB1_VST3 -j 4
 
       - name: Verify universal binaries and minimum macOS
+        if: always()
         run: |
-          set -e
-          found=0
-          for bundle in $(find build -type d \( -name 'AMB-1.component' -o -name 'AMB-1.vst3' \) -not -path '*/dist/*'); do
-            bin="$bundle/Contents/MacOS/AMB-1"
-            archs=$(lipo -archs "$bin")
-            echo "$bundle: $archs"
-            otool -arch all -l "$bin" | grep -A4 -E 'LC_BUILD_VERSION|LC_VERSION_MIN' | grep -E 'cmd|minos|version' || true
-            case "$archs" in *arm64*) ;; *) echo "missing arm64"; exit 1;; esac
-            case "$archs" in *x86_64*) ;; *) echo "missing x86_64"; exit 1;; esac
-            found=$((found+1))
-          done
-          test "$found" -ge 2
+          set +e
+          {
+            found=0; bad=0
+            for bundle in $(find build -type d \( -name 'AMB-1.component' -o -name 'AMB-1.vst3' \) -not -path '*/dist/*'); do
+              bin="$bundle/Contents/MacOS/AMB-1"
+              archs=$(lipo -archs "$bin")
+              echo "$bundle: $archs"
+              otool -arch all -l "$bin" | grep -A4 -E 'LC_BUILD_VERSION|LC_VERSION_MIN' | grep -E 'minos|version'
+              case "$archs" in *arm64*) ;; *) echo "MISSING arm64"; bad=1;; esac
+              case "$archs" in *x86_64*) ;; *) echo "MISSING x86_64"; bad=1;; esac
+              found=$((found+1))
+            done
+            echo "bundles found: $found"
+            [ "$found" -ge 2 ] || bad=1
+            exit $bad
+          } > build/verify.txt 2>&1
+          status=$?
+          cat build/verify.txt
+          bash .github/scripts/annotate.sh verify-universal build/verify.txt $status
+          exit $status
 
       - name: Ad-hoc sign and package
+        if: always()
         run: |
           set -e
           mkdir -p dist
@@ -78,15 +106,23 @@ jobs:
           ls -la dist amb1-macos.zip
 
       - name: auval (informational; does not fail the build)
+        if: always()
         continue-on-error: true
         run: |
+          set +e
           mkdir -p ~/Library/Audio/Plug-Ins/Components
           rm -rf ~/Library/Audio/Plug-Ins/Components/AMB-1.component
           ditto dist/AMB-1.component ~/Library/Audio/Plug-Ins/Components/AMB-1.component
-          killall -9 AudioComponentRegistrar 2>/dev/null || true
+          killall -9 AudioComponentRegistrar 2>/dev/null
           sleep 3
-          auval -a | grep -i -E 'Amb1|Ptdt' || echo "AMB-1 not listed by auval -a"
-          auval -v aumu Amb1 Ptdt 2>&1 | tee build/auval.txt | tail -40
+          {
+            auval -a | grep -i -E 'Amb1|Ptdt' || echo "AMB-1 not listed by auval -a"
+            auval -v aumu Amb1 Ptdt 2>&1
+          } > build/auval_full.txt 2>&1
+          tail -n 45 build/auval_full.txt | tee build/auval.txt
+          grep -q 'AU VALIDATION SUCCEEDED' build/auval_full.txt; status=$?
+          bash .github/scripts/annotate.sh auval build/auval.txt $status
+          exit 0
 
       - uses: actions/upload-artifact@v4
         if: always()
@@ -94,6 +130,7 @@ jobs:
           name: amb1-macos
           path: |
             amb1-macos.zip
-            build/auval.txt
+            build/auval_full.txt
             build/render1.txt
+            build/plugin_test.txt
           if-no-files-found: warn
