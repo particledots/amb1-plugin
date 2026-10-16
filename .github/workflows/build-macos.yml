@@ -61,7 +61,7 @@ jobs:
         if: always()
         run: |
           set +e
-          {
+          (
             found=0; bad=0
             for bundle in $(find build -type d \( -name 'AMB-1.component' -o -name 'AMB-1.vst3' \) -not -path '*/dist/*'); do
               bin="$bundle/Contents/MacOS/AMB-1"
@@ -75,7 +75,7 @@ jobs:
             echo "bundles found: $found"
             [ "$found" -ge 2 ] || bad=1
             exit $bad
-          } > build/verify.txt 2>&1
+          ) > build/verify.txt 2>&1
           status=$?
           cat build/verify.txt
           bash .github/scripts/annotate.sh verify-universal build/verify.txt $status
