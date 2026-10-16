@@ -124,12 +124,12 @@ AmbEditor::AmbEditor(AmbProcessor& p) : juce::AudioProcessorEditor(p), proc_(p)
     freezeAtt_ = std::make_unique<ButtonAtt>(proc_.apvts, "freeze", freezeButton_);
     nextAtt_ = std::make_unique<ButtonAtt>(proc_.apvts, "next", nextButton_);
 
-    masterCaption_.setText("Master (dB)", juce::dontSendNotification);
+    masterCaption_.setText("Master dB", juce::dontSendNotification);
     masterCaption_.setColour(juce::Label::textColourId, AmbLookAndFeel::dim());
     masterCaption_.setJustificationType(juce::Justification::centredRight);
     addAndMakeVisible(masterCaption_);
     masterSlider_.setSliderStyle(juce::Slider::LinearHorizontal);
-    masterSlider_.setTextBoxStyle(juce::Slider::TextBoxRight, false, 52, 20);
+    masterSlider_.setTextBoxStyle(juce::Slider::TextBoxRight, false, 46, 20);
     addAndMakeVisible(masterSlider_);
     masterAtt_ = std::make_unique<SliderAtt>(proc_.apvts, "master", masterSlider_);
 
@@ -177,7 +177,12 @@ void AmbEditor::addGroup(const char* title, std::initializer_list<const char*> i
         {
             c->isChoice = true;
             // the attachment maps by index onto the items, it does not add them: fill the list first
-            c->menu.addItemList(param->getAllValueStrings(), 1);
+            const auto choices = param->getAllValueStrings();
+            c->menu.addItemList(choices, 1);
+            int longest = 0;
+            for (const auto& choice : choices)
+                longest = juce::jmax(longest, choice.length());
+            c->weight = juce::jlimit(1.0f, 1.6f, 0.55f + 0.12f * (float)longest);   // "Pent maj" (8) needs room
             addAndMakeVisible(c->menu);
             c->menuAtt = std::make_unique<ComboAtt>(proc_.apvts, id, c->menu);
         }
@@ -255,13 +260,13 @@ void AmbEditor::resized()
 
     // --- header ---
     auto header = area.removeFromTop(48.0f * s);
-    titleArea_ = header.removeFromLeft(130.0f * s);
+    titleArea_ = header.removeFromLeft(112.0f * s);
     const float rowH = 28.0f * s;
     const float gap = 8.0f * s;
 
-    pieceCaption_.setBounds(header.removeFromLeft(44.0f * s).withSizeKeepingCentre(44.0f * s, rowH).toNearestInt());
+    pieceCaption_.setBounds(header.removeFromLeft(40.0f * s).withSizeKeepingCentre(40.0f * s, rowH).toNearestInt());
     header.removeFromLeft(gap);
-    pieceMenu_.setBounds(header.removeFromLeft(190.0f * s).withSizeKeepingCentre(190.0f * s, rowH).toNearestInt());
+    pieceMenu_.setBounds(header.removeFromLeft(160.0f * s).withSizeKeepingCentre(160.0f * s, rowH).toNearestInt());
     header.removeFromLeft(gap * 2.0f);
     for (auto* b : {&playButton_, &freezeButton_, &nextButton_})
     {
@@ -272,7 +277,7 @@ void AmbEditor::resized()
     // Master takes what is left on the right
     if (header.getWidth() > 150.0f * s)
     {
-        masterCaption_.setBounds(header.removeFromLeft(88.0f * s).withSizeKeepingCentre(88.0f * s, rowH).toNearestInt());
+        masterCaption_.setBounds(header.removeFromLeft(62.0f * s).withSizeKeepingCentre(62.0f * s, rowH).toNearestInt());
         header.removeFromLeft(gap);
         masterSlider_.setBounds(header.withSizeKeepingCentre(header.getWidth(), rowH).toNearestInt());
         masterCaption_.setVisible(true);
@@ -293,29 +298,37 @@ void AmbEditor::resized()
     float y = area.getY();
     for (const auto& row : rows)
     {
-        size_t total = 0;
+        auto groupWeight = [this](size_t gi) {
+            float sum = 0.0f;
+            for (const auto& c : groups_[gi]->controls)
+                sum += c->weight;
+            return sum;
+        };
+        float total = 0.0f;
         for (size_t gi : row)
             if (gi < groups_.size())
-                total += groups_[gi]->controls.size();
+                total += groupWeight(gi);
         const float usable = area.getWidth() - gap * (float)(row.size() - 1);
         float x = area.getX();
         for (size_t gi : row)
         {
-            if (gi >= groups_.size() || total == 0)
+            if (gi >= groups_.size() || total <= 0.0f)
                 continue;
             auto& group = *groups_[gi];
-            const float w = usable * (float)group.controls.size() / (float)total;
+            const float gw = groupWeight(gi);
+            const float w = usable * gw / total;
             group.card = juce::Rectangle<float>(x, y, w, rowHeight);
             x += w + gap;
 
             auto content = group.card.reduced(8.0f * s);
             group.titleArea = content.removeFromTop(20.0f * s);
-            const float cellW = content.getWidth() / (float)juce::jmax<size_t>(1, group.controls.size());
+            float cellX = content.getX();
             for (size_t ci = 0; ci < group.controls.size(); ++ci)
             {
                 auto& c = *group.controls[ci];
-                auto cell = juce::Rectangle<float>(content.getX() + cellW * (float)ci, content.getY(), cellW,
-                                                   content.getHeight());
+                const float cellW = content.getWidth() * c.weight / gw;
+                auto cell = juce::Rectangle<float>(cellX, content.getY(), cellW, content.getHeight());
+                cellX += cellW;
                 c.caption.setBounds(cell.removeFromTop(18.0f * s).toNearestInt());
                 c.caption.setFont(juce::Font(juce::FontOptions(12.0f * s)));
                 if (c.isChoice)

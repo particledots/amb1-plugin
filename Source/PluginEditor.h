@@ -49,6 +49,7 @@ private:
     struct Control
     {
         bool isChoice = false;
+        float weight = 1.0f;   // its share of the group's width: a menu with longer choices gets more
         juce::Label caption;
         juce::Slider knob;
         juce::ComboBox menu;
