@@ -24,7 +24,7 @@ jobs:
           bash .github/scripts/annotate.sh settings build/settings.txt 0
 
       - name: Build the headless tests
-        run: cmake --build build --config Release --target render_test rate_test plugin_test -j 4
+        run: cmake --build build --config Release --target render_test rate_test plugin_test echo_test -j 4
 
       - name: "render_test, twice (two fresh processes must print identical output)"
         run: |
@@ -43,6 +43,14 @@ jobs:
           ./build/rate_test > build/rate_test.txt 2>&1; status=$?
           cat build/rate_test.txt
           bash .github/scripts/annotate.sh rate_test build/rate_test.txt $status
+          exit $status
+
+      - name: echo_test (every Echo time plays as asked at every tempo)
+        run: |
+          set +e
+          ./build/echo_test > build/echo_test.txt 2>&1; status=$?
+          cat build/echo_test.txt
+          bash .github/scripts/annotate.sh echo_test build/echo_test.txt $status
           exit $status
 
       - name: plugin_test
@@ -133,4 +141,5 @@ jobs:
             build/auval_full.txt
             build/render1.txt
             build/plugin_test.txt
+            build/echo_test.txt
           if-no-files-found: warn

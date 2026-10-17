@@ -1026,7 +1026,7 @@ static void plate_init(void)
  * (the repeats fall in changing patterns, left and right), and now and then the second head slides to
  * another part of the loop, as a head moved by hand (the repeats bend a little in pitch on the way).
  * The Echoplex has a second tap, for the right. */
-#define TAPE_N 62000                             /* 5.6 s at 11.025 kHz */
+#define TAPE_N 360000                            /* AMB1-PLUGIN: was 62000 (5.6 s, the FM-1's RAM); now 32.6 s so every Echo time fits */
 #define TAPE_SR 11025.0f
 static int16_t tape[TAPE_N] EN_POOL;
 static int tape_w, tape_ph;
