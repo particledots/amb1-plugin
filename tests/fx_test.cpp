@@ -112,10 +112,19 @@ int main()
     }
     {
         AmbProcessor p;
+        p.apvts.getParameter("play")->setValueNotifyingHost(0.0f);   // as a host restores a saved project: before the engine starts
         start(p, 48000.0, 512);
-        p.apvts.getParameter("play")->setValueNotifyingHost(0.0f);
         const Out o = run(p, 20.0, 48000.0, 512);
-        report("with Play off no notes are sent", o.noteOns[0] + o.noteOns[1] + o.noteOns[2] + o.noteOns[9] == 0);
+        report("with Play off from the start no notes are sent", o.noteOns[0] + o.noteOns[1] + o.noteOns[2] + o.noteOns[9] == 0);
+    }
+    {
+        AmbProcessor p;
+        start(p, 48000.0, 512);
+        run(p, 10.0, 48000.0, 512);
+        p.apvts.getParameter("play")->setValueNotifyingHost(0.0f);   // switched off while it plays
+        run(p, 2.0, 48000.0, 512);                                   // the notes end
+        const Out o = run(p, 20.0, 48000.0, 512);
+        report("switched off while playing: no new notes afterwards (20 s)", o.noteOns[0] + o.noteOns[1] + o.noteOns[2] + o.noteOns[9] == 0);
     }
     {
         AmbProcessor a, b;   // only one engine per process: the second instance sends no notes but passes MIDI through
