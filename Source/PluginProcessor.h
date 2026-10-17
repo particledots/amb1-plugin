@@ -66,6 +66,10 @@ public:
     // Host parameter id for an engine parameter (the engine's P_* enum); nullptr for P_MIDI (not exposed).
     static const char* engineParamId(int engineParam);
 
+    // The random start (1..65535) given to the engine at its last start; 0 before the first start. Each start of the
+    // engine (prepareToPlay) draws a new one, so a garden does not begin the same way every time.
+    uint32_t lastRandomStart() const { return randomStart_.load(); }
+
     juce::AudioProcessorValueTreeState apvts;
 
 private:
@@ -89,6 +93,7 @@ private:
     std::atomic<uint32_t> customPacked_{0};   // Mode in the high 16 bits, the scale mask in the low 16 (0 = none)
     std::atomic<int> libraryMode_{0};         // the Mode that was set when the Scale menu's choice was made
     std::atomic<bool> blocked_{false};
+    std::atomic<uint32_t> randomStart_{0};
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(AmbProcessor)
 };

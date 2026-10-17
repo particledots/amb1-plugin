@@ -217,6 +217,9 @@ void AmbProcessor::prepareToPlay(double sampleRate, int)
         blocked_.store(false);
         AmbControls c;
         readControls(c);
+        // A different random start every time the engine starts (1..65535: 0 would mean none).
+        c.seed = 1u + (uint32_t)juce::Random::getSystemRandom().nextInt(65535);
+        randomStart_.store(c.seed);
         core_.prepare(sampleRate, c);
     }
     else

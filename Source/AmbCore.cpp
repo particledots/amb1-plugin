@@ -45,6 +45,10 @@ void AmbCore::prepare(double hostRate, const AmbControls& c)
     // playing against the buttons. Clear both; the lines below then set them from the controls.
     en_freeze(0);
     en_play(0);
+    // A random start: en_seed() XORs a value made from the 16-bit seed into the engine's generator. It is posted
+    // here, before the regrow below, so it shapes the new garden's loops. 0 = none = the engine as it was.
+    if (c.seed != 0u)
+        en_seed(c.seed);
     en_set(P_MIDI, 0);   // MIDI out is a no-op in the plugin; keep the engine from generating it
 
     last_.fill(INT_MIN);

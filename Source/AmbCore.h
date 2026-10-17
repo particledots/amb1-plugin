@@ -20,6 +20,7 @@ struct AmbControls
     bool freeze = false;
     bool nextToggle = false;   // every change of this flag asks for the next chord
     bool syncToHost = false;   // follow the host's tempo (see AmbCore::setHostTempo) instead of the Tempo parameter
+    uint32_t seed = 0;         // the random start, used by prepare() only: 0 = none (the engine's own state); else en_seed(seed)
     uint32_t scale = 0;        // a scale of your own (see Scale.h: relative to the root); 0 = the Mode's scale
     AmbControls();             // engine defaults
 };

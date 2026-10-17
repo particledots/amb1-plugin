@@ -3,6 +3,7 @@
 // rule, programs (the eight pieces) and saved state.   ./plugin_test
 #include <cmath>
 #include <cstdio>
+#include <set>
 #include <string>
 #include <vector>
 #include "PluginProcessor.h"
@@ -111,6 +112,24 @@ int main()
         run(p, 1.0, 48000.0, 512);   // let the gain ramp settle
         const Stats quiet = run(p, 2.0, 48000.0, 512);
         report("master at -48 dB is silent", quiet.peak < 1e-6, fmt(quiet));
+    }
+
+    printf("random start\n");
+    {
+        AmbProcessor p;
+        report("no random start before the engine has started", p.lastRandomStart() == 0u);
+        bool inRange = true;
+        std::set<uint32_t> seen;
+        for (int i = 0; i < 20; ++i)
+        {
+            start(p, 48000.0, 512);
+            const uint32_t s = p.lastRandomStart();
+            inRange = inRange && s >= 1u && s <= 65535u;
+            seen.insert(s);
+        }
+        report("every start draws a random start in 1..65535", inRange);
+        report("and they differ from start to start (20 starts, more than one value)", seen.size() > 1u,
+               "(" + std::to_string(seen.size()) + " different)");
     }
 
     printf("one instance at a time\n");
