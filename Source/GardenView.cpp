@@ -38,12 +38,14 @@ void square(juce::Graphics& g, Point<float> p, float half, Colour c)
 constexpr float kLoopRadius[EN_NLOOP] = {36.0f, 43.0f, 50.0f, 57.0f};   // the hardware's pixels
 constexpr float kDesignHeight = 160.0f;   // the panel's height at scale 1
 
-// Where the ring sits in the panel, shared by paint() and by clicks. u: one hardware pixel.
+// Where the garden ring sits in the panel, shared by paint() and by clicks. u: one hardware pixel.
 struct RingGeometry
 {
     Point<float> c;
     float u;
     float s;
+    float areaTop;
+    float areaH;
 };
 RingGeometry ringGeometry(juce::Rectangle<float> b)
 {
@@ -51,9 +53,29 @@ RingGeometry ringGeometry(juce::Rectangle<float> b)
     const float strip = 24.0f * s, margin = 7.0f * s;
     const float areaTop = strip + margin * 0.5f, areaBottom = b.getBottom() - margin;
     const float areaH = areaBottom - areaTop;
-    return {Point<float>(b.getCentreX(), areaTop + areaH * 0.5f), areaH / 122.0f, s};   // 122 = the outer loop's diameter plus a disc
+    return {Point<float>(b.getCentreX(), areaTop + areaH * 0.5f), areaH / 122.0f, s, areaTop, areaH};   // 122 = the outer loop's diameter plus a disc
 }
-constexpr float kScaleRadius = 24.0f;   // the scale's ring, in hardware pixels
+
+// The big scale ring (v0.6.1): the place you edit the scale. It sits in the free space between the level bars and the
+// garden ring, as large as that space and the panel's height allow. Notes are at radius R, each a disc of dotR.
+struct ScaleRing
+{
+    Point<float> c;
+    float R, dotR, hitR, centreR;
+};
+ScaleRing scaleRing(juce::Rectangle<float> b)
+{
+    const RingGeometry g = ringGeometry(b);
+    const float left = b.getX() + (126.0f + 18.0f) * g.s;                  // after the four level bars
+    const float right = g.c.x - 61.0f * g.u - 14.0f * g.s;                 // before the garden ring's outer loop
+    const float availW = juce::jmax(1.0f, right - left);
+    const float half = juce::jmax(10.0f * g.s, juce::jmin(g.areaH, availW) * 0.5f);
+    const float R = half * (51.0f / 60.5f);
+    return {Point<float>(left + availW * 0.5f, g.areaTop + g.areaH * 0.5f), R, half * (9.5f / 60.5f),
+            R * 0.245f,   // click zone: just under half the distance between neighbours (0.2588 R), so zones never overlap
+            R * 0.6f};
+}
+constexpr float kScaleRadius = 24.0f;   // the garden ring's own small scale ring, in hardware pixels
 } // namespace
 
 GardenView::GardenView(AmbProcessor& p) : proc_(p)
@@ -64,11 +86,7 @@ GardenView::GardenView(AmbProcessor& p) : proc_(p)
     rawRoot_ = proc_.apvts.getRawParameterValue("root");
     rawMode_ = proc_.apvts.getRawParameterValue("mode");
     rawTempo_ = proc_.apvts.getRawParameterValue("tempo");
-    setTooltip("The garden, live. Middle: the scale as a ring (C at the top) with the chord lit and named, and the four "
-               "bell loops going round it. Click a note on the ring to add it to the scale or take it out (the root "
-               "stays; at least three notes). \"Custom\" in the top line means the scale is your own: click it to go back "
-               "to the Mode's. Left: how loud Pad, Bells, Bass and Pulse are right now. Right: the three pulse patterns "
-               "(thump, hat, open hat). Top right: how far to the next chord.");
+    setTooltip("Click a note in the big scale ring to add it or take it out. Click the middle to go back to the Mode's scale.");
     setOpaque(false);
     timerCallback();
     startTimerHz(20);
@@ -237,6 +255,53 @@ void GardenView::paint(juce::Graphics& g)
                          juce::Justification::centred, 1, 0.6f);
     }
 
+    // --- the scale ring you edit (v0.6.1): 12 labelled notes, C at the top ---
+    {
+        const ScaleRing sr = scaleRing(b);
+        const float fs = sr.dotR * 1.05f;
+        g.setFont(juce::Font(juce::FontOptions(fs).withStyle("Bold")));
+        for (int i = 0; i < 12; ++i)
+        {
+            const auto p = polar(sr.c, sr.R, i, 12);
+            const bool inScale = (st.pool >> i & 1u) != 0u, inChord = (st.chord >> i & 1u) != 0u;
+            if (inChord)
+                disc(g, p, sr.dotR, mix(tint(padColour()), padColour(), 0.5f + 0.5f * st.padLevel));
+            else if (inScale)
+                disc(g, p, sr.dotR, mix(tint(padColour()), padColour(), 0.62f));
+            else
+            {
+                g.setColour(AmbLookAndFeel::cardEdge());
+                g.drawEllipse(p.x - sr.dotR, p.y - sr.dotR, 2.0f * sr.dotR, 2.0f * sr.dotR, 1.2f * s);
+            }
+            if (i == st.root)   // the root: ringed in ink
+            {
+                g.setColour(AmbLookAndFeel::text());
+                g.drawEllipse(p.x - sr.dotR - 2.0f * s, p.y - sr.dotR - 2.0f * s, 2.0f * (sr.dotR + 2.0f * s),
+                              2.0f * (sr.dotR + 2.0f * s), 1.8f * s);
+            }
+            g.setColour(inScale ? AmbLookAndFeel::card() : AmbLookAndFeel::dim());
+            g.drawText(EN_NOTE_NAME[i], juce::Rectangle<float>(p.x - sr.dotR, p.y - sr.dotR, 2.0f * sr.dotR, 2.0f * sr.dotR),
+                       juce::Justification::centred);
+        }
+        // the middle: the scale's name; when it is your own, a button back to the Mode's
+        g.setColour(AmbLookAndFeel::dim());
+        g.setFont(juce::Font(juce::FontOptions(sr.R * 0.19f)));
+        g.drawText("scale", juce::Rectangle<float>(sr.c.x - sr.centreR, sr.c.y - sr.R * 0.5f, 2.0f * sr.centreR, sr.R * 0.25f),
+                   juce::Justification::centred);
+        g.setColour(st.custom ? padColour() : AmbLookAndFeel::text());
+        g.setFont(juce::Font(juce::FontOptions(sr.R * 0.26f).withStyle("Bold")));
+        g.drawFittedText(st.custom ? "Custom" : EN_MODE_NAME[st.mode],
+                         juce::Rectangle<float>(sr.c.x - sr.centreR, sr.c.y - sr.R * 0.22f, 2.0f * sr.centreR, sr.R * 0.34f).toNearestInt(),
+                         juce::Justification::centred, 1, 0.6f);
+        if (st.custom)
+        {
+            g.setColour(AmbLookAndFeel::dim());
+            g.setFont(juce::Font(juce::FontOptions(sr.R * 0.17f)));
+            g.drawText("tap to reset", juce::Rectangle<float>(sr.c.x - sr.centreR, sr.c.y + sr.R * 0.16f, 2.0f * sr.centreR, sr.R * 0.25f),
+                       juce::Justification::centred);
+        }
+    }
+
     // --- the four levels, at the left ---
     {
         static const char* const names[4] = {"Pad", "Bells", "Bass", "Pulse"};
@@ -310,37 +375,37 @@ juce::Rectangle<float> GardenView::keyLabelBounds() const
 
 juce::Point<float> GardenView::notePosition(juce::Rectangle<float> panel, int pc)
 {
-    const RingGeometry ring = ringGeometry(panel);
-    return polar(ring.c, kScaleRadius * ring.u, pc, 12);
+    const ScaleRing sr = scaleRing(panel);
+    return polar(sr.c, sr.R, pc, 12);
 }
 
 int GardenView::noteAtPoint(juce::Rectangle<float> panel, juce::Point<float> where)
 {
-    const RingGeometry ring = ringGeometry(panel);
-    int best = -1;
-    float bestDist = 6.5f * ring.u;   // neighbours are 12.4 u apart, so these zones never overlap
+    const ScaleRing sr = scaleRing(panel);
     for (int i = 0; i < 12; ++i)
-    {
-        const float d = polar(ring.c, kScaleRadius * ring.u, i, 12).getDistanceFrom(where);
-        if (d <= bestDist)
-        {
-            bestDist = d;
-            best = i;
-        }
-    }
-    return best;
+        if (polar(sr.c, sr.R, i, 12).getDistanceFrom(where) <= sr.hitR)
+            return i;
+    return -1;
+}
+
+juce::Point<float> GardenView::scaleCentre(juce::Rectangle<float> panel) { return scaleRing(panel).c; }
+
+bool GardenView::onScaleCentre(juce::Rectangle<float> panel, juce::Point<float> where)
+{
+    const ScaleRing sr = scaleRing(panel);
+    return sr.c.getDistanceFrom(where) <= sr.centreR;
 }
 
 void GardenView::mouseMove(const juce::MouseEvent& e)
 {
     const auto p = e.position;
-    const bool overLabel = shown_.custom && keyLabelBounds().contains(p);
+    const bool overLabel = shown_.custom && (keyLabelBounds().contains(p) || onScaleCentre(getLocalBounds().toFloat(), p));
     setMouseCursor(overLabel || noteAtPoint(getLocalBounds().toFloat(), p) >= 0 ? juce::MouseCursor::PointingHandCursor : juce::MouseCursor::NormalCursor);
 }
 
 void GardenView::mouseDown(const juce::MouseEvent& e)
 {
-    if (shown_.custom && keyLabelBounds().contains(e.position))
+    if (shown_.custom && (keyLabelBounds().contains(e.position) || onScaleCentre(getLocalBounds().toFloat(), e.position)))
     {
         proc_.useModeScale();
         timerCallback();

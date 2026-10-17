@@ -348,6 +348,14 @@ int main()
         {
             for (int pc = 0; pc < 12; ++pc)
                 ok = ok && GardenView::noteAtPoint(panel, GardenView::notePosition(panel, pc)) == pc;
+            for (int pc = 0; pc < 12; ++pc)   // the scale ring is inside the panel and left of the garden ring
+            {
+                const auto q = GardenView::notePosition(panel, pc);
+                ok = ok && panel.reduced(2.0f).contains(q) && q.x < panel.getCentreX() - 20.0f;
+            }
+            ok = ok && GardenView::onScaleCentre(panel, GardenView::scaleCentre(panel)) &&
+                 GardenView::noteAtPoint(panel, GardenView::scaleCentre(panel)) == -1 &&
+                 !GardenView::onScaleCentre(panel, GardenView::notePosition(panel, 0));
             const juce::Point<float> middle(panel.getCentreX(), panel.getCentreY());
             ok = ok && GardenView::noteAtPoint(panel, middle) == -1 &&
                  GardenView::noteAtPoint(panel, juce::Point<float>(2.0f, 2.0f)) == -1 &&
@@ -357,7 +365,7 @@ int main()
             const int mid = GardenView::noteAtPoint(panel, (a + b) * 0.5f);
             ok = ok && (mid == 0 || mid == 1 || mid == -1);
         }
-        report("a click on a note of the ring finds that note, a click elsewhere finds none", ok);
+        report("a click on a note of the scale ring finds that note; the middle resets; elsewhere finds nothing", ok);
     }
 
     printf(gOk ? "PASS\n" : "FAIL\n");

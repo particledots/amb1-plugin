@@ -4,8 +4,8 @@
 // the left the levels of Pad, Bells, Bass and Pulse; at the right the three pulse patterns; along the top the key,
 // the tempo, a slow beat light and the way to the next chord (or "held" while frozen).
 // It only reads (see GardenState.h); it never changes the engine. The one thing it does: a click on a note of the
-// ring adds it to the scale or takes it out (AmbProcessor::toggleScaleNote), and a click on "Custom" in the top line
-// goes back to the Mode's scale.
+// big scale ring adds it to the scale or takes it out (AmbProcessor::toggleScaleNote), and a click on the ring's middle
+// (or on "Custom" in the top line) goes back to the Mode's scale.
 #pragma once
 #include <cstdint>
 #include <juce_audio_processors/juce_audio_processors.h>
@@ -21,10 +21,12 @@ public:
     void mouseDown(const juce::MouseEvent&) override;
     void mouseMove(const juce::MouseEvent&) override;
 
-    // The ring's geometry, for clicks (and the tests): where pitch class `pc` (0 = C) sits in a panel of these
-    // bounds, and which pitch class (if any) a point in the panel is on.
+    // The big scale ring's geometry, for clicks (and the tests): where pitch class `pc` (0 = C) sits in a panel of
+    // these bounds, which pitch class (if any) a point in the panel is on, and the ring's middle (the reset button).
     static juce::Point<float> notePosition(juce::Rectangle<float> panel, int pc);
     static int noteAtPoint(juce::Rectangle<float> panel, juce::Point<float> where);
+    static juce::Point<float> scaleCentre(juce::Rectangle<float> panel);
+    static bool onScaleCentre(juce::Rectangle<float> panel, juce::Point<float> where);
 
 private:
     void timerCallback() override;
