@@ -38,6 +38,8 @@ void AmbCore::prepare(double hostRate, const AmbControls& c)
     regrow_.store(false);
     sync_ = false;
     tickCountdown_ = 0.0;
+    hostRate_ = hostRate;
+    engineDue_ = 0.0;
 
     en_init();
     // en_init() leaves the engine's playing and frozen flags as they were, and the engine is a process-wide
@@ -49,7 +51,8 @@ void AmbCore::prepare(double hostRate, const AmbControls& c)
     // here, before the regrow below, so it shapes the new garden's loops. 0 = none = the engine as it was.
     if (c.seed != 0u)
         en_seed(c.seed);
-    en_set(P_MIDI, 0);   // MIDI out is a no-op in the plugin; keep the engine from generating it
+    // MIDI out is off unless this is the MIDI effect build (c.midiOut): then the engine sends its notes to en_midi_out.
+    en_set(P_MIDI, c.midiOut ? 1 : 0);
 
     last_.fill(INT_MIN);
     lastPool_ = INT_MIN;
@@ -151,11 +154,31 @@ void AmbCore::engineChunk(float* l, float* r, int count)
         tickCountdown_ -= (double)count;
     }
     en_render(tmp_, (uint32_t)count, kEngineGainQ12);
+    if (l == nullptr || r == nullptr)
+        return;
     constexpr float k = 1.0f / 8388608.0f;   // 24-bit in int32
     for (int i = 0; i < count; ++i)
     {
         l[i] = (float)tmp_[2 * i] * k;
         r[i] = (float)tmp_[2 * i + 1] * k;
+    }
+}
+
+void AmbCore::advance(int n, ChunkFn onChunk, void* ctx)
+{
+    if (n <= 0 || hostRate_ <= 0.0)
+        return;
+    engineDue_ += (double)n * (double)EN_SR / hostRate_;
+    const double hostPerEngine = hostRate_ / (double)EN_SR;
+    int k = 0;   // chunks run in this block so far
+    while (engineDue_ >= (double)Resampler::kChunk)
+    {
+        engineChunk(nullptr, nullptr, Resampler::kChunk);
+        engineDue_ -= (double)Resampler::kChunk;
+        const int offset = std::clamp((int)std::lround((double)k * Resampler::kChunk * hostPerEngine), 0, n - 1);
+        ++k;
+        if (onChunk != nullptr)
+            onChunk(ctx, offset);
     }
 }
 

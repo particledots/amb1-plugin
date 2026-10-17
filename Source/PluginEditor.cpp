@@ -94,8 +94,10 @@ AmbEditor::AmbEditor(AmbProcessor& p) : juce::AudioProcessorEditor(p), proc_(p)
     setLookAndFeel(&laf_);
 
     // --- the red notice when another AMB-1 holds the engine (unchanged behaviour) ---
-    banner_.setText("Another AMB-1 is already running in this session, so this one is silent. "
-                    "(This version can sound only one AMB-1 at a time.)",
+    banner_.setText(AMB1_MIDI_FX ? "Another AMB-1 MIDI is already running in this session, so this one sends no notes. "
+                                   "(This version can run only one AMB-1 MIDI at a time.)"
+                                 : "Another AMB-1 is already running in this session, so this one is silent. "
+                                   "(This version can sound only one AMB-1 at a time.)",
                     juce::dontSendNotification);
     banner_.setJustificationType(juce::Justification::centred);
     banner_.setColour(juce::Label::backgroundColourId, juce::Colours::darkred);
@@ -251,7 +253,7 @@ void AmbEditor::paint(juce::Graphics& g)
     g.setColour(AmbLookAndFeel::accent());
     g.setFont(juce::Font(juce::FontOptions(26.0f * s).withStyle("Bold")));
     auto title = titleArea_;   // removeFromTop changes its receiver: work on a copy
-    g.drawText("AMB-1", title.removeFromTop(title.getHeight() * 0.65f), juce::Justification::bottomLeft);
+    g.drawText(AMB1_MIDI_FX ? "AMB-1 MIDI" : "AMB-1", title.removeFromTop(title.getHeight() * 0.65f), juce::Justification::bottomLeft);
     g.setColour(AmbLookAndFeel::dim());
     g.setFont(juce::Font(juce::FontOptions(10.5f * s)));
     g.drawText("unofficial port", title, juce::Justification::topLeft);

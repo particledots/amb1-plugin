@@ -22,6 +22,7 @@ struct AmbControls
     bool syncToHost = false;   // follow the host's tempo (see AmbCore::setHostTempo) instead of the Tempo parameter
     uint32_t seed = 0;         // the random start, used by prepare() only: 0 = none (the engine's own state); else en_seed(seed)
     uint32_t scale = 0;        // a scale of your own (see Scale.h: relative to the root); 0 = the Mode's scale
+    bool midiOut = false;      // prepare() only: let the engine send its notes to en_midi_out (the MIDI effect build); false = none
     AmbControls();             // engine defaults
 };
 
@@ -51,9 +52,16 @@ public:
     void setHostTempo(double bpm);
     // Render n frames at the host rate, with a linear gain ramp from the previous block's gain.
     void render(float* l, float* r, int n, float gain);
+    // The MIDI effect build: run the engine for as long as n host frames take, with no audio out. The engine runs
+    // in chunks of Resampler::kChunk (128) engine frames; after each chunk, onChunk(ctx, hostOffset) is called so
+    // the caller can collect the notes that chunk sent to en_midi_out. hostOffset (0..n-1) is where the chunk
+    // starts inside this host block, so a note is placed at most one chunk (2.9 ms) from where the engine made it.
+    // The audio thread, after apply(), only when active.
+    using ChunkFn = void (*)(void* ctx, int hostOffset);
+    void advance(int n, ChunkFn onChunk, void* ctx);
 
 private:
-    void engineChunk(float* l, float* r, int count);
+    void engineChunk(float* l, float* r, int count);   // l and r may be null: run the engine, keep no audio
 
     Resampler resampler_;
     std::array<int, P_NPARAMS> last_{};
@@ -66,6 +74,8 @@ private:
     bool sync_ = false;
     double hostBpm_ = 0.0;         // last plausible host tempo; 0 = never heard one
     double tickCountdown_ = 0.0;   // engine frames until the next tick
+    double hostRate_ = 0.0;        // set by prepare(); advance() turns host frames into engine frames with it
+    double engineDue_ = 0.0;       // engine frames owed by advance() (always below one chunk after it returns)
     int32_t tmp_[2 * Resampler::kChunk]{};
 
     static std::atomic<const AmbCore*> owner_;

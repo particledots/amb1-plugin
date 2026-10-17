@@ -7,6 +7,12 @@
 #include "AmbCore.h"
 #include "Scale.h"
 
+// AMB1_MIDI_FX=1 builds the MIDI effect ("AMB-1 MIDI", AU type aumi): the same engine and controls, but no sound.
+// The garden's notes leave as MIDI (pad channel 1, bells 2, bass 3, pulse 10) and the instrument after it plays them.
+#ifndef AMB1_MIDI_FX
+#define AMB1_MIDI_FX 0
+#endif
+
 class AmbProcessor : public juce::AudioProcessor,
                      private juce::AudioProcessorValueTreeState::Listener,
                      private juce::AsyncUpdater
@@ -24,10 +30,10 @@ public:
     bool hasEditor() const override { return true; }
     juce::AudioProcessorEditor* createEditor() override;
 
-    const juce::String getName() const override { return "AMB-1"; }
+    const juce::String getName() const override { return AMB1_MIDI_FX ? "AMB-1 MIDI" : "AMB-1"; }
     bool acceptsMidi() const override { return true; }
-    bool producesMidi() const override { return false; }
-    bool isMidiEffect() const override { return false; }
+    bool producesMidi() const override { return AMB1_MIDI_FX != 0; }
+    bool isMidiEffect() const override { return AMB1_MIDI_FX != 0; }
     double getTailLengthSeconds() const override { return 0.0; }
 
     int getNumPrograms() override;
@@ -94,6 +100,9 @@ private:
     std::atomic<int> libraryMode_{0};         // the Mode that was set when the Scale menu's choice was made
     std::atomic<bool> blocked_{false};
     std::atomic<uint32_t> randomStart_{0};
+#if AMB1_MIDI_FX
+    juce::MidiBuffer fxOut_;   // the block's MIDI going out: what came in, plus the garden's notes (audio thread only)
+#endif
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(AmbProcessor)
 };

@@ -26,7 +26,7 @@ jobs:
       - name: Build the headless tests
         run: |
           set +e
-          cmake --build build --config Release --target render_test rate_test plugin_test echo_test scales_test seed_test -j 4 > build/tests-build.txt 2>&1; status=$?
+          cmake --build build --config Release --target render_test rate_test plugin_test echo_test scales_test seed_test midifx_test fx_test -j 4 > build/tests-build.txt 2>&1; status=$?
           if [ $status -ne 0 ]; then grep -E "error|Error" build/tests-build.txt | head -20 | while read -r l; do echo "::error::${l}"; done; fi
           exit $status
 
@@ -73,6 +73,22 @@ jobs:
           bash .github/scripts/annotate.sh seed_test build/seed_test.txt $status
           exit $status
 
+      - name: "midifx_test (the MIDI effect build's engine side - notes out, timing, Play off)"
+        run: |
+          set +e
+          ./build/midifx_test > build/midifx_test.txt 2>&1; status=$?
+          cat build/midifx_test.txt
+          bash .github/scripts/annotate.sh midifx_test build/midifx_test.txt $status
+          exit $status
+
+      - name: "fx_test (the MIDI effect plugin object - MIDI in, MIDI out, no audio)"
+        run: |
+          set +e
+          ./build/fx_test > build/fx_test.txt 2>&1; status=$?
+          cat build/fx_test.txt
+          bash .github/scripts/annotate.sh fx_test build/fx_test.txt $status
+          exit $status
+
       - name: plugin_test
         run: |
           set +e
@@ -83,7 +99,7 @@ jobs:
 
       - name: Build the plugins
         if: always()
-        run: cmake --build build --config Release --target AMB1_AU AMB1_VST3 -j 4
+        run: cmake --build build --config Release --target AMB1_AU AMB1_VST3 AMB1MIDI_AU AMB1MIDI_VST3 -j 4
 
       - name: Verify universal binaries and minimum macOS
         if: always()
@@ -91,8 +107,8 @@ jobs:
           set +e
           (
             found=0; bad=0
-            for bundle in $(find build -type d \( -name 'AMB-1.component' -o -name 'AMB-1.vst3' \) -not -path '*/dist/*'); do
-              bin="$bundle/Contents/MacOS/AMB-1"
+            for bundle in $(find build -type d \( -name 'AMB-1.component' -o -name 'AMB-1.vst3' -o -name 'AMB-1-MIDI.component' -o -name 'AMB-1-MIDI.vst3' \) -not -path '*/dist/*'); do
+              bin="$bundle/Contents/MacOS/$(basename "$bundle" | sed 's/\.[^.]*$//')"
               archs=$(lipo -archs "$bin")
               echo "$bundle: $archs"
               otool -arch all -l "$bin" | grep -A4 -E 'LC_BUILD_VERSION|LC_VERSION_MIN' | grep -E 'minos|version'
@@ -101,7 +117,7 @@ jobs:
               found=$((found+1))
             done
             echo "bundles found: $found"
-            [ "$found" -ge 2 ] || bad=1
+            [ "$found" -ge 4 ] || bad=1
             exit $bad
           ) > build/verify.txt 2>&1
           status=$?
@@ -114,7 +130,7 @@ jobs:
         run: |
           set -e
           mkdir -p dist
-          for bundle in $(find build -type d \( -name 'AMB-1.component' -o -name 'AMB-1.vst3' \)); do
+          for bundle in $(find build -type d \( -name 'AMB-1.component' -o -name 'AMB-1.vst3' -o -name 'AMB-1-MIDI.component' -o -name 'AMB-1-MIDI.vst3' \)); do
             codesign --force --deep -s - "$bundle"
             ditto "$bundle" "dist/$(basename "$bundle")"
           done
@@ -129,6 +145,11 @@ jobs:
           3. Restart Logic Pro. If it is not listed: Logic Pro > Settings > Plug-in Manager, select AMB-1, Reset & Rescan Selection.
           4. Software Instrument track > Instrument slot > Audio Units > particledots > AMB-1.
           Only one AMB-1 can sound at a time in this version.
+
+          AMB-1-MIDI (new, MIDI effect): the same garden with no sound of its own; its notes go to the instrument after it.
+          Copy AMB-1-MIDI.component to ~/Library/Audio/Plug-Ins/Components/ and AMB-1-MIDI.vst3 to ~/Library/Audio/Plug-Ins/VST3/,
+          clear quarantine the same way, restart Logic. Use it in the MIDI FX slot of a Software Instrument track
+          (MIDI FX > Audio Units > particledots > AMB-1 MIDI) with any instrument you like.
           EOF
           ditto -c -k --sequesterRsrc dist amb1-macos.zip
           ls -la dist amb1-macos.zip
@@ -139,8 +160,9 @@ jobs:
         run: |
           set +e
           mkdir -p ~/Library/Audio/Plug-Ins/Components
-          rm -rf ~/Library/Audio/Plug-Ins/Components/AMB-1.component
+          rm -rf ~/Library/Audio/Plug-Ins/Components/AMB-1.component ~/Library/Audio/Plug-Ins/Components/AMB-1-MIDI.component
           ditto dist/AMB-1.component ~/Library/Audio/Plug-Ins/Components/AMB-1.component
+          ditto dist/AMB-1-MIDI.component ~/Library/Audio/Plug-Ins/Components/AMB-1-MIDI.component
           killall -9 AudioComponentRegistrar 2>/dev/null
           sleep 3
           {
@@ -152,6 +174,20 @@ jobs:
           bash .github/scripts/annotate.sh auval build/auval.txt $status
           exit 0
 
+      - name: auval for the MIDI effect (informational; does not fail the build)
+        if: always()
+        continue-on-error: true
+        run: |
+          set +e
+          {
+            auval -a | grep -i -E 'Ambm|AMB-1 MIDI' || echo "AMB-1 MIDI not listed by auval -a"
+            auval -v aumi Ambm Ptdt 2>&1
+          } > build/auval_midi_full.txt 2>&1
+          tail -n 45 build/auval_midi_full.txt | tee build/auval_midi.txt
+          grep -q 'AU VALIDATION SUCCEEDED' build/auval_midi_full.txt; status=$?
+          bash .github/scripts/annotate.sh auval-midi build/auval_midi.txt $status
+          exit 0
+
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -159,6 +195,9 @@ jobs:
           path: |
             amb1-macos.zip
             build/auval_full.txt
+            build/auval_midi_full.txt
+            build/midifx_test.txt
+            build/fx_test.txt
             build/render1.txt
             build/plugin_test.txt
             build/echo_test.txt

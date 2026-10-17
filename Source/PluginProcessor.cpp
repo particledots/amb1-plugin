@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: GPL-3.0-only
 #include "PluginProcessor.h"
 #include "PluginEditor.h"
+#if AMB1_MIDI_FX
+#include "MidiFxHooks.h"
+#endif
 
 namespace
 {
@@ -69,7 +72,11 @@ juce::AudioProcessorValueTreeState::ParameterLayout AmbProcessor::createLayout()
 }
 
 AmbProcessor::AmbProcessor()
+#if AMB1_MIDI_FX
+    : juce::AudioProcessor(BusesProperties()),   // a MIDI effect: no audio buses
+#else
     : juce::AudioProcessor(BusesProperties().withOutput("Output", juce::AudioChannelSet::stereo(), true)),
+#endif
       apvts(*this, nullptr, "AMB1", createLayout())
 {
     for (int i = 0; i < P_NPARAMS; ++i)
@@ -220,7 +227,14 @@ void AmbProcessor::prepareToPlay(double sampleRate, int)
         // A different random start every time the engine starts (1..65535: 0 would mean none).
         c.seed = 1u + (uint32_t)juce::Random::getSystemRandom().nextInt(65535);
         randomStart_.store(c.seed);
+#if AMB1_MIDI_FX
+        c.midiOut = true;   // the notes are this build's output
+        fxOut_.ensureSize(8192);
+#endif
         core_.prepare(sampleRate, c);
+#if AMB1_MIDI_FX
+        amb1fx::clear();    // whatever prepare() made the engine say is not part of the music
+#endif
     }
     else
     {
@@ -236,9 +250,53 @@ void AmbProcessor::releaseResources()
 
 bool AmbProcessor::isBusesLayoutSupported(const BusesLayout& layouts) const
 {
+#if AMB1_MIDI_FX
+    return layouts.getMainOutputChannelSet().isDisabled() && layouts.getMainInputChannelSet().isDisabled();
+#else
     return layouts.getMainOutputChannelSet() == juce::AudioChannelSet::stereo();
+#endif
 }
 
+#if AMB1_MIDI_FX
+namespace
+{
+// Called by AmbCore::advance() after each engine chunk: move the notes the chunk made into the block's MIDI.
+void collectChunk(void* ctx, int hostOffset)
+{
+    auto* out = static_cast<juce::MidiBuffer*>(ctx);
+    for (int i = 0; i < amb1fx::count(); ++i)
+    {
+        const amb1fx::Event& e = amb1fx::at(i);
+        out->addEvent(juce::MidiMessage((int)e.status, (int)e.data1, (int)e.data2), hostOffset);
+    }
+    amb1fx::clear();
+}
+} // namespace
+
+// The MIDI effect build: no audio. The garden runs in step with the host's time and its notes go out as MIDI at their
+// positions in the block; everything that came in (the keyboard, controllers) passes through unchanged.
+void AmbProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midi)
+{
+    const int n = buffer.getNumSamples();
+    if (!core_.isActive() || n <= 0)
+        return;   // a blocked second instance: the MIDI that came in goes on untouched
+    double bpm = 0.0;
+    if (auto* head = getPlayHead())
+        if (const auto position = head->getPosition())
+            if (const auto hostBpm = position->getBpm())
+                bpm = *hostBpm;
+    core_.setHostTempo(bpm);
+
+    AmbControls c;
+    readControls(c);
+    core_.apply(c);
+
+    fxOut_.clear();
+    fxOut_.addEvents(midi, 0, n, 0);
+    core_.advance(n, collectChunk, &fxOut_);
+    midi.swapWith(fxOut_);
+}
+#else
 void AmbProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer&)
 {
     juce::ScopedNoDenormals noDenormals;
@@ -263,6 +321,7 @@ void AmbProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuff
     const float gain = juce::Decibels::decibelsToGain(rawMaster_->load(), -48.0f);
     core_.render(buffer.getWritePointer(0), buffer.getWritePointer(1), n, gain);
 }
+#endif
 
 juce::AudioProcessorEditor* AmbProcessor::createEditor() { return new AmbEditor(*this); }
 
