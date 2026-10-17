@@ -8,7 +8,7 @@ endif()
 
 # The version is the plugin's version in the host. Raise it with every release: macOS and Logic cache a
 # plugin's name and details and only refresh them when the installed file's version goes up.
-project(AMB1 VERSION 0.6.2 LANGUAGES C CXX)
+project(AMB1 VERSION 0.7.0 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -36,6 +36,10 @@ target_link_libraries(render_test PRIVATE amb_engine)
 
 add_executable(rate_test tests/rate_test.cpp)
 target_link_libraries(rate_test PRIVATE amb1_core)
+
+# scales_test: the Scale menu's scales through the engine (it defines the engine's MIDI-out hook itself to see every note)
+add_executable(scales_test tests/scales_test.cpp)
+target_link_libraries(scales_test PRIVATE amb1_core)
 
 # echo_test #includes engine/amb.c to read the engine's own state, so it is built on its own, not linked with amb_engine.
 add_executable(echo_test tests/echo_test.c)

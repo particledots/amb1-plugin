@@ -115,8 +115,8 @@ uint64_t GardenView::signature(const GardenState& s, int tempo, bool noticeOn)
     uint64_t h = 1469598103934665603ull;
     auto in = [&h](uint64_t v) { h = (h ^ v) * 1099511628211ull; };
     in((uint64_t)s.live | (uint64_t)s.playing << 1 | (uint64_t)s.frozen << 2 | (uint64_t)s.external << 3 |
-       (uint64_t)s.pulseRest << 4 | (uint64_t)s.custom << 5 | (uint64_t)noticeOn << 6);
-    in((uint64_t)s.root | (uint64_t)s.mode << 4 | (uint64_t)tempo << 8);
+       (uint64_t)s.pulseRest << 4 | (uint64_t)s.custom << 5 | (uint64_t)noticeOn << 6 | (uint64_t)s.resettable << 7);
+    in((uint64_t)s.root | (uint64_t)s.mode << 4 | (uint64_t)tempo << 8 | (uint64_t)s.library << 24);
     in(s.pool | (uint64_t)s.chord << 12);
     for (const char* c = s.chordName; *c != 0; ++c)
         in((uint64_t)(unsigned char)*c);
@@ -145,7 +145,7 @@ void GardenView::timerCallback()
     const int levels[4] = {(int)raw_[0]->load(), (int)raw_[1]->load(), (int)raw_[2]->load(), (int)raw_[3]->load()};
     const int tempo = (int)rawTempo_->load();
     GardenState now = GardenState::capture(proc_.ownsEngine(), (int)rawRoot_->load(), (int)rawMode_->load(), levels,
-                                           proc_.customScale());
+                                           proc_.customScale(), proc_.libraryScale());
     const uint64_t sig = signature(now, tempo, noticeActive());
     if (haveSig_ && sig == lastSig_)
         return;   // nothing a viewer could see has changed: skip the repaint
@@ -175,14 +175,14 @@ void GardenView::paint(juce::Graphics& g)
         const float x = b.getX() + 14.0f * s;
         g.setFont(juce::Font(juce::FontOptions(12.5f * s).withStyle("Bold")));
         g.setColour(st.playing ? AmbLookAndFeel::text() : AmbLookAndFeel::dim());
-        const juce::String key = juce::String(EN_NOTE_NAME[st.root]) + " " + (st.custom ? "Custom" : EN_MODE_NAME[st.mode]);
-        g.drawText(key, juce::Rectangle<float>(x, stripY, 112.0f * s, stripH), juce::Justification::centredLeft);
+        const juce::String key = juce::String(EN_NOTE_NAME[st.root]) + " " + st.scaleName;
+        g.drawText(key, juce::Rectangle<float>(x, stripY, 132.0f * s, stripH), juce::Justification::centredLeft);
         g.setFont(juce::Font(juce::FontOptions(11.5f * s)));
         g.setColour(AmbLookAndFeel::dim());
         const juce::String tempo = st.external ? juce::String("host tempo") : juce::String(tempo_) + " bpm";
-        g.drawText(tempo, juce::Rectangle<float>(x + 112.0f * s, stripY, 84.0f * s, stripH), juce::Justification::centredLeft);
+        g.drawText(tempo, juce::Rectangle<float>(x + 132.0f * s, stripY, 84.0f * s, stripH), juce::Justification::centredLeft);
 
-        const Point<float> light(x + 112.0f * s + 84.0f * s + 10.0f * s, stripY + stripH * 0.5f);
+        const Point<float> light(x + 132.0f * s + 84.0f * s + 10.0f * s, stripY + stripH * 0.5f);
         if (st.playing)
             disc(g, light, 5.0f * s, ((st.bars / 4u) & 1u) == 0u ? padColour() : tint(padColour()));   // alternates every 4 sixteenths
         else
@@ -301,12 +301,12 @@ void GardenView::paint(juce::Graphics& g)
                        juce::Justification::centred);
         }
         // the middle: the scale's name; when it is your own, a button back to the Mode's
-        g.setColour(st.custom ? padColour() : AmbLookAndFeel::text());
+        g.setColour(st.resettable ? padColour() : AmbLookAndFeel::text());
         g.setFont(juce::Font(juce::FontOptions(sr.R * 0.26f).withStyle("Bold")));
-        g.drawFittedText(st.custom ? "Custom" : EN_MODE_NAME[st.mode],
+        g.drawFittedText(st.scaleName,
                          juce::Rectangle<float>(sr.c.x - sr.centreR, sr.c.y - sr.R * 0.22f, 2.0f * sr.centreR, sr.R * 0.34f).toNearestInt(),
                          juce::Justification::centred, 1, 0.6f);
-        if (st.custom)
+        if (st.resettable)
         {
             g.setColour(AmbLookAndFeel::dim());
             g.setFont(juce::Font(juce::FontOptions(sr.R * 0.17f)));
@@ -384,7 +384,7 @@ juce::Rectangle<float> GardenView::keyLabelBounds() const
 {
     const auto b = getLocalBounds().toFloat();
     const float s = b.getHeight() / kDesignHeight;
-    return {b.getX() + 14.0f * s, 4.0f * s, 112.0f * s, 16.0f * s};
+    return {b.getX() + 14.0f * s, 4.0f * s, 132.0f * s, 16.0f * s};
 }
 
 juce::Point<float> GardenView::notePosition(juce::Rectangle<float> panel, int pc)
@@ -413,13 +413,13 @@ bool GardenView::onScaleCentre(juce::Rectangle<float> panel, juce::Point<float> 
 void GardenView::mouseMove(const juce::MouseEvent& e)
 {
     const auto p = e.position;
-    const bool overLabel = shown_.custom && (keyLabelBounds().contains(p) || onScaleCentre(getLocalBounds().toFloat(), p));
+    const bool overLabel = shown_.resettable && (keyLabelBounds().contains(p) || onScaleCentre(getLocalBounds().toFloat(), p));
     setMouseCursor(overLabel || noteAtPoint(getLocalBounds().toFloat(), p) >= 0 ? juce::MouseCursor::PointingHandCursor : juce::MouseCursor::NormalCursor);
 }
 
 void GardenView::mouseDown(const juce::MouseEvent& e)
 {
-    if (shown_.custom && (keyLabelBounds().contains(e.position) || onScaleCentre(getLocalBounds().toFloat(), e.position)))
+    if (shown_.resettable && (keyLabelBounds().contains(e.position) || onScaleCentre(getLocalBounds().toFloat(), e.position)))
     {
         proc_.useModeScale();
         timerCallback();

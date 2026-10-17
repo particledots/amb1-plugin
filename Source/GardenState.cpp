@@ -2,13 +2,15 @@
 #include "GardenState.h"
 #include "Scale.h"
 #include <algorithm>
+#include <cstdio>
 
 namespace
 {
 float clamp01(float x) { return x < 0.0f ? 0.0f : x > 1.0f ? 1.0f : x; }
 }
 
-GardenState GardenState::capture(bool live, int root, int mode, const int (&layerPercent)[4], uint32_t customScale)
+GardenState GardenState::capture(bool live, int root, int mode, const int (&layerPercent)[4], uint32_t customScale,
+                                 int library)
 {
     GardenState s;
     s.live = live;
@@ -16,8 +18,13 @@ GardenState GardenState::capture(bool live, int root, int mode, const int (&laye
     s.mode = std::clamp(mode, 0, (int)EN_NMODES - 1);
 
     // the scale: the mode's pool (or your own) is relative to the root; rotate it to absolute pitch classes (as AMB-1 does)
-    s.custom = amb1scale::isCustom(customScale, s.mode);
-    s.pool = amb1scale::toAbsolute(amb1scale::effective(customScale, s.mode), s.root);
+    s.library = (library > 0 && library < amb1scale::kLibraryCount) ? library : 0;
+    s.custom = amb1scale::isCustom(customScale, s.mode, s.library);
+    s.resettable = s.custom || s.library > 0;
+    const uint32_t base = amb1scale::basePool(s.mode, s.library);
+    s.pool = amb1scale::toAbsolute(amb1scale::valid(customScale) ? customScale : base, s.root);
+    snprintf(s.scaleName, sizeof s.scaleName, "%s",
+             s.custom ? "Custom" : s.library > 0 ? amb1scale::libraryTable()[s.library].name : EN_MODE_NAME[s.mode]);
 
     if (!live)
         return s;   // another instance owns the engine: its state is not ours to show

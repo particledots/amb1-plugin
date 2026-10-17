@@ -24,7 +24,7 @@ jobs:
           bash .github/scripts/annotate.sh settings build/settings.txt 0
 
       - name: Build the headless tests
-        run: cmake --build build --config Release --target render_test rate_test plugin_test echo_test -j 4
+        run: cmake --build build --config Release --target render_test rate_test plugin_test echo_test scales_test -j 4
 
       - name: "render_test, twice (two fresh processes must print identical output)"
         run: |
@@ -51,6 +51,14 @@ jobs:
           ./build/echo_test > build/echo_test.txt 2>&1; status=$?
           cat build/echo_test.txt
           bash .github/scripts/annotate.sh echo_test build/echo_test.txt $status
+          exit $status
+
+      - name: scales_test (the 20 new scales play, and every note stays in the scale)
+        run: |
+          set +e
+          ./build/scales_test > build/scales_test.txt 2>&1; status=$?
+          cat build/scales_test.txt
+          bash .github/scripts/annotate.sh scales_test build/scales_test.txt $status
           exit $status
 
       - name: plugin_test

@@ -7,6 +7,7 @@
 #include <vector>
 #include "PluginProcessor.h"
 #include "GardenView.h"
+#include "GardenState.h"
 #include "Scale.h"
 
 static bool gOk = true;
@@ -72,12 +73,12 @@ int main()
         const std::vector<std::string> expected = {
             "pad", "bells", "bass", "pulse", "density", "evolve", "drift", "hits", "echo", "etime", "reverb", "size",
             "bright", "swell", "btone", "motion", "tune", "tempo", "root", "mode", "boct", "padtone", "bassoct",
-            "glide", "fifth", "swing", "hats", "play", "freeze", "next", "master", "sync"};
+            "glide", "fifth", "swing", "hats", "play", "freeze", "next", "master", "sync", "scale"};
         std::vector<std::string> got;
         for (auto* prm : p.getParameters())
             if (auto* withId = dynamic_cast<juce::AudioProcessorParameterWithID*>(prm))
                 got.push_back(withId->paramID.toStdString());
-        report("32 parameters with the expected ids, in order (saved projects depend on them)", got == expected,
+        report("33 parameters with the expected ids, in order (saved projects depend on them)", got == expected,
                "(" + std::to_string(got.size()) + " found)");
         report("eight programs, named after the pieces", p.getNumPrograms() == 8 &&
                p.getProgramName(0) == "Garden" && p.getProgramName(7) == "Tides");
@@ -340,6 +341,183 @@ int main()
         p.useModeScale();
         report("\"Custom\" clicked: back to the Mode's scale", own3 && p.customScale() == 0);
         p.releaseResources();
+    }
+
+    printf("the Scale menu\n");
+    {
+        using amb1scale::Toggle;
+        AmbProcessor p;
+        start(p, 48000.0, 512);
+        p.setCurrentProgram(0);   // the Garden
+        const int root = p.paramValue(P_ROOT), mode = p.paramValue(P_MODE);
+
+        auto* scaleParam = dynamic_cast<juce::AudioParameterChoice*>(p.apvts.getParameter("scale"));
+        const auto names = scaleParam != nullptr ? scaleParam->choices : juce::StringArray();
+        report("the Scale parameter is a menu of 22 choices: Mode's own, 20 scales, Custom",
+               names.size() == 22 && names[0] == "Mode's own" && names[1] == "Locrian" && names[20] == "Chromatic" &&
+               names[21] == "Custom");
+        report("it starts on \"Mode's own\" and nothing is in use", p.scaleChoice() == 0 && p.libraryScale() == 0 &&
+               p.customScale() == 0);
+
+        // a scale from the menu really sounds: every chord note is in it, whatever its size (3 .. 12 notes)
+        auto chordsInScale = [&](uint32_t relPool) {
+            const uint32_t absPool = amb1scale::toAbsolute(relPool, root);
+            run(p, 3.0, 48000.0, 512);
+            bool in = true;
+            for (int i = 0; i < 40; ++i)
+            {
+                run(p, 0.25, 48000.0, 512);
+                for (int k = 0; k < EN_NPAD; ++k)
+                    in = in && (absPool >> (en_chord[k] % 12) & 1u) != 0u;
+            }
+            return in;
+        };
+        for (int choice : {1, 7, 12, 16, 17, 20})   // Locrian, Double Harm., Hirajoshi, Whole Tone, Octatonic WH, Chromatic
+        {
+            setValue(p, "scale", (float)choice);
+            const Stats st = run(p, 5.0, 48000.0, 512);
+            const bool in = chordsInScale(amb1scale::libraryPool(choice));
+            char nm[64];
+            snprintf(nm, sizeof nm, "%s: finite audio, not silent, every chord note in the scale", amb1scale::choiceName(choice));
+            report(nm, p.libraryScale() == choice && st.nan == 0 && !st.allZero && st.peak < 1.0 && in, fmt(st));
+        }
+
+        // Root keeps it; another Mode, a piece, or "Mode's own" put the Mode's scale back
+        setValue(p, "scale", 1.0f);
+        setValue(p, "root", (float)((root + 3) % 12));
+        report("changing Root keeps the menu's scale", p.libraryScale() == 1 && p.scaleChoice() == 1);
+        setValue(p, "root", (float)root);
+        setValue(p, "mode", (float)((mode + 1) % (int)EN_NMODES));
+        report("another Mode: the Mode's scale sounds at once", p.libraryScale() == 0 && p.customScale() == 0);
+        p.normaliseScaleParam();   // (the message thread does this soon after; done here by hand)
+        report("and the menu goes back to \"Mode's own\"", p.scaleChoice() == 0);
+        setValue(p, "mode", (float)mode);
+        report("the old Mode again does not bring the scale back", p.libraryScale() == 0 && p.scaleChoice() == 0);
+        setValue(p, "scale", 5.0f);
+        p.setCurrentProgram(0);   // the same piece again
+        report("choosing a piece (even the same one) goes back to \"Mode's own\"", p.scaleChoice() == 0 && p.libraryScale() == 0);
+        setValue(p, "scale", 5.0f);
+        p.useModeScale();
+        report("the ring's middle (useModeScale) goes back to \"Mode's own\"", p.scaleChoice() == 0 && p.libraryScale() == 0);
+
+        // editing by hand starts from the menu's scale
+        const uint32_t locrian = amb1scale::libraryPool(1);
+        setValue(p, "scale", 1.0f);
+        int outRel = 1;
+        while (locrian >> outRel & 1u)
+            ++outRel;
+        const int outPc = (root + outRel) % 12;
+        report("a note outside the menu's scale goes in: the scale is yours, the menu says Custom",
+               p.toggleScaleNote(outPc) == Toggle::Changed && p.customScale() == (locrian | 1u << outRel) &&
+               p.scaleChoice() == amb1scale::kCustomChoice && p.libraryScale() == 0);
+        report("the same note again takes it out: back on the menu's scale, nothing of your own kept",
+               p.toggleScaleNote(outPc) == Toggle::Changed && p.customScale() == 0 && p.scaleChoice() == 1 && p.libraryScale() == 1);
+        report("the root still cannot be taken out of a menu scale", p.toggleScaleNote(root) == Toggle::RootStays && p.scaleChoice() == 1);
+
+        // a hand-edited scale is shown as Custom; picking a menu entry (the same one too) replaces it
+        p.toggleScaleNote(outPc);
+        const bool own = p.customScale() != 0 && p.scaleChoice() == amb1scale::kCustomChoice;
+        setValue(p, "scale", 1.0f);
+        report("choosing the menu's entry again replaces what you edited", own && p.customScale() == 0 && p.libraryScale() == 1);
+        p.toggleScaleNote(outPc);
+        setValue(p, "scale", 0.0f);
+        report("choosing \"Mode's own\" replaces what you edited", p.customScale() == 0 && p.scaleChoice() == 0);
+
+        // editing the Mode's own scale by hand into exactly a menu scale (Locrian) names it: the menu says Locrian
+        {
+            AmbProcessor q;
+            start(q, 48000.0, 512);
+            q.setCurrentProgram(0);
+            const int qroot = q.paramValue(P_ROOT), qmode = q.paramValue(P_MODE);
+            auto current = [&] {
+                return q.customScale() != 0u ? q.customScale() : amb1scale::basePool(qmode, q.libraryScale());
+            };
+            bool allChanged = true;
+            for (int pass = 0; pass < 2; ++pass)   // add first, then remove: never fewer than 3 notes on the way
+                for (int rel = 1; rel < 12; ++rel)
+                {
+                    const bool want = (locrian >> rel & 1u) != 0u, has = (current() >> rel & 1u) != 0u;
+                    if (want != has && want == (pass == 0))
+                        allChanged = allChanged && q.toggleScaleNote((qroot + rel) % 12) == Toggle::Changed;
+                }
+            report("hand edits that end exactly on a menu scale are shown as that scale, not as Custom",
+                   allChanged && q.customScale() == 0 && q.scaleChoice() == 1 && q.libraryScale() == 1);
+            q.releaseResources();
+        }
+
+        // "Custom" picked by a host with nothing behind it is put right
+        setValue(p, "scale", (float)amb1scale::kCustomChoice);
+        p.normaliseScaleParam();
+        report("\"Custom\" with nothing of your own behind it goes back to \"Mode's own\"", p.scaleChoice() == 0);
+
+        // saved projects
+        setValue(p, "scale", 7.0f);
+        juce::MemoryBlock withMenu;
+        p.getStateInformation(withMenu);
+        {
+            AmbProcessor q;
+            q.setStateInformation(withMenu.getData(), (int)withMenu.getSize());
+            report("a saved project brings the menu's scale back", q.scaleChoice() == 7 && q.libraryScale() == 7 &&
+                   q.customScale() == 0 && q.paramValue(P_MODE) == mode);
+        }
+        {
+            auto xml = juce::AudioProcessor::getXmlFromBinary(withMenu.getData(), (int)withMenu.getSize());
+            if (xml != nullptr)
+                if (auto* child = xml->getChildByAttribute("id", "scale"))
+                    xml->removeChildElement(child, true);   // the format before v0.7: no Scale entry at all
+            juce::MemoryBlock old;
+            if (xml != nullptr)
+                juce::AudioProcessor::copyXmlToBinary(*xml, old);
+            AmbProcessor q;
+            setValue(q, "scale", 9.0f);   // an instance that has a menu scale right now
+            q.setStateInformation(old.getData(), (int)old.getSize());
+            report("a project saved before the Scale menu existed loads on \"Mode's own\"", xml != nullptr &&
+                   q.scaleChoice() == 0 && q.libraryScale() == 0);
+        }
+        // a scale you edited by hand, saved by v0.6 (no Scale entry, but the two extra entries): comes back, shown as Custom
+        setValue(p, "scale", 0.0f);
+        p.toggleScaleNote(outPc);   // outside the Mode's scale or inside it: either way a change; make sure it is yours
+        if (p.customScale() == 0)
+            p.toggleScaleNote(outPc);
+        const uint32_t mine = p.customScale();
+        juce::MemoryBlock withOwn;
+        p.getStateInformation(withOwn);
+        {
+            AmbProcessor q;
+            q.setStateInformation(withOwn.getData(), (int)withOwn.getSize());
+            report("a saved project brings your own scale back, shown as Custom", mine != 0 && q.customScale() == mine &&
+                   q.scaleChoice() == amb1scale::kCustomChoice);
+        }
+        {
+            auto xml = juce::AudioProcessor::getXmlFromBinary(withOwn.getData(), (int)withOwn.getSize());
+            bool removed = false;
+            if (xml != nullptr)
+                if (auto* child = xml->getChildByAttribute("id", "scale"))
+                    removed = xml->removeChildElement(child, true);
+            juce::MemoryBlock v06;
+            if (xml != nullptr)
+                juce::AudioProcessor::copyXmlToBinary(*xml, v06);
+            AmbProcessor q;
+            q.setStateInformation(v06.getData(), (int)v06.getSize());
+            report("a v0.6 project with a scale of your own (no Scale entry) still brings it back, shown as Custom",
+                   removed && mine != 0 && q.customScale() == mine && q.scaleChoice() == amb1scale::kCustomChoice);
+        }
+        p.releaseResources();
+    }
+    {
+        // the garden's picture follows the menu: the ring's scale, the name, and "Custom"
+        const int lv[4] = {100, 100, 100, 100};
+        const int root = 2, mode = MODE_IONIAN;
+        const GardenState none = GardenState::capture(false, root, mode, lv);
+        const GardenState menu = GardenState::capture(false, root, mode, lv, 0u, 5);
+        const uint32_t mine = amb1scale::libraryPool(5) | 2u;
+        const GardenState own = GardenState::capture(false, root, mode, lv, mine, 5);
+        report("garden state: the Mode's name, the menu scale's name, \"Custom\"",
+               std::string(none.scaleName) == "Ionian" && !none.resettable && none.library == 0 &&
+               std::string(menu.scaleName) == "Hungarian Min" && menu.resettable && !menu.custom && menu.library == 5 &&
+               menu.pool == amb1scale::toAbsolute(amb1scale::libraryPool(5), root) &&
+               std::string(own.scaleName) == "Custom" && own.custom && own.resettable &&
+               own.pool == amb1scale::toAbsolute(mine, root));
     }
     {
         // the ring's click zones (the geometry the garden panel draws with)

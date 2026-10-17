@@ -6,6 +6,7 @@
 // A "custom" scale is stored as such a mask; 0 means "none: use the Mode's scale".
 #pragma once
 #include <cstdint>
+#include "ScaleLibrary.h"
 
 extern "C" {
 #include "amb.h"
@@ -31,6 +32,12 @@ inline uint32_t effective(uint32_t custom, int mode) { return valid(custom) ? cu
 
 // True when the scale that sounds is not the Mode's (the hardware shows "Custom").
 inline bool isCustom(uint32_t custom, int mode) { return valid(custom) && custom != modePool(mode); }
+
+// The scale you start from: the Scale menu's entry (1..20) if there is one, else the Mode's (v0.7).
+inline uint32_t basePool(int mode, int library) { return library > 0 ? libraryPool(library) : modePool(mode); }
+
+// True when the scale that sounds is one you edited by hand (not the Mode's and not the menu's scale).
+inline bool isCustom(uint32_t custom, int mode, int library) { return valid(custom) && custom != basePool(mode, library); }
 
 // A relative pool turned to absolute pitch classes (bit 0 = C) for this root.
 inline uint32_t toAbsolute(uint32_t rel, int root)

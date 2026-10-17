@@ -146,7 +146,7 @@ AmbEditor::AmbEditor(AmbProcessor& p) : juce::AudioProcessorEditor(p), proc_(p)
     addGroup("Motion", {"density", "evolve", "drift", "hits", "motion"});
     addGroup("Space", {"echo", "etime", "reverb", "size"});
     addGroup("Tone", {"bright", "swell", "btone", "padtone"});
-    addGroup("Key & tempo", {"root", "mode", "tempo", "sync", "tune", "boct"});
+    addGroup("Key & tempo", {"root", "mode", "scale", "tempo", "sync", "tune", "boct"});
     addGroup("Bass line", {"bassoct", "glide", "fifth"});
     addGroup("Rhythm", {"swing", "hats"});
 
@@ -188,6 +188,12 @@ void AmbEditor::addGroup(const char* title, std::initializer_list<const char*> i
             // the attachment maps by index onto the items, it does not add them: fill the list first
             const auto choices = param->getAllValueStrings();
             c->menu.addItemList(choices, 1);
+            if (juce::String(id) == "scale")
+            {
+                // "Custom" is shown while the scale is one you edited by hand on the ring; it cannot be picked
+                c->menu.setItemEnabled(choices.size(), false);
+                c->menu.setTooltip("Play this scale instead of the Mode's. Choosing another Mode or piece resets it.");
+            }
             int longest = 0;
             for (const auto& choice : choices)
                 longest = juce::jmax(longest, choice.length());
