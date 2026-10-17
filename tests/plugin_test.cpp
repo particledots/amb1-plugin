@@ -493,7 +493,10 @@ int main()
             bool removed = false;
             if (xml != nullptr)
                 if (auto* child = xml->getChildByAttribute("id", "scale"))
-                    removed = xml->removeChildElement(child, true);
+                {
+                    xml->removeChildElement(child, true);
+                    removed = true;
+                }
             juce::MemoryBlock v06;
             if (xml != nullptr)
                 juce::AudioProcessor::copyXmlToBinary(*xml, v06);
