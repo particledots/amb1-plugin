@@ -38,7 +38,32 @@ void square(juce::Graphics& g, Point<float> p, float half, Colour c)
 constexpr float kLoopRadius[EN_NLOOP] = {36.0f, 43.0f, 50.0f, 57.0f};   // the hardware's pixels
 constexpr float kDesignHeight = 160.0f;   // the panel's height at scale 1
 
-// Where the garden ring sits in the panel, shared by paint() and by clicks. u: one hardware pixel.
+// The panel's row of five rings, left to right: the scale you edit, the garden (chord and bell loops), and the three
+// pulse patterns (v0.6.2). All five are the same size, as big as the panel's height and width allow, each with a
+// caption underneath. The four level bars stay at the left.
+struct PanelLayout
+{
+    float s, areaTop, areaH, labelH, D, ringY;
+    float x[5];   // the rings' centres
+};
+PanelLayout panelLayout(juce::Rectangle<float> b)
+{
+    PanelLayout L{};
+    L.s = b.getHeight() / kDesignHeight;
+    const float strip = 24.0f * L.s, margin = 7.0f * L.s;
+    L.areaTop = strip + margin * 0.5f;
+    L.areaH = (b.getBottom() - margin) - L.areaTop;
+    L.labelH = 13.0f * L.s;
+    const float left = b.getX() + 144.0f * L.s, right = b.getRight() - 14.0f * L.s;   // after the level bars
+    const float slot = juce::jmax(1.0f, right - left) / 5.0f;
+    L.D = juce::jmax(20.0f * L.s, juce::jmin(L.areaH - L.labelH, slot - 8.0f * L.s));
+    L.ringY = L.areaTop + (L.areaH - L.labelH) * 0.5f;
+    for (int i = 0; i < 5; ++i)
+        L.x[i] = left + slot * ((float)i + 0.5f);
+    return L;
+}
+
+// The garden ring (chord and bell loops). u: one hardware pixel.
 struct RingGeometry
 {
     Point<float> c;
@@ -49,15 +74,11 @@ struct RingGeometry
 };
 RingGeometry ringGeometry(juce::Rectangle<float> b)
 {
-    const float s = b.getHeight() / kDesignHeight;
-    const float strip = 24.0f * s, margin = 7.0f * s;
-    const float areaTop = strip + margin * 0.5f, areaBottom = b.getBottom() - margin;
-    const float areaH = areaBottom - areaTop;
-    return {Point<float>(b.getCentreX(), areaTop + areaH * 0.5f), areaH / 122.0f, s, areaTop, areaH};   // 122 = the outer loop's diameter plus a disc
+    const PanelLayout L = panelLayout(b);
+    return {Point<float>(L.x[1], L.ringY), L.D / 122.0f, L.s, L.areaTop, L.areaH};   // 122 = the outer loop's diameter plus a disc
 }
 
-// The big scale ring (v0.6.1): the place you edit the scale. It sits in the free space between the level bars and the
-// garden ring, as large as that space and the panel's height allow. Notes are at radius R, each a disc of dotR.
+// The scale ring you edit: the first of the five. Notes are at radius R, each a disc of dotR.
 struct ScaleRing
 {
     Point<float> c;
@@ -65,13 +86,10 @@ struct ScaleRing
 };
 ScaleRing scaleRing(juce::Rectangle<float> b)
 {
-    const RingGeometry g = ringGeometry(b);
-    const float left = b.getX() + (126.0f + 18.0f) * g.s;                  // after the four level bars
-    const float right = g.c.x - 61.0f * g.u - 14.0f * g.s;                 // before the garden ring's outer loop
-    const float availW = juce::jmax(1.0f, right - left);
-    const float half = juce::jmax(10.0f * g.s, juce::jmin(g.areaH, availW) * 0.5f);
+    const PanelLayout L = panelLayout(b);
+    const float half = L.D * 0.5f;
     const float R = half * (51.0f / 60.5f);
-    return {Point<float>(left + availW * 0.5f, g.areaTop + g.areaH * 0.5f), R, half * (9.5f / 60.5f),
+    return {Point<float>(L.x[0], L.ringY), R, half * (9.5f / 60.5f),
             R * 0.245f,   // click zone: just under half the distance between neighbours (0.2588 R), so zones never overlap
             R * 0.6f};
 }
@@ -209,7 +227,6 @@ void GardenView::paint(juce::Graphics& g)
     }
 
     const float areaTop = strip + margin * 0.5f, areaBottom = b.getBottom() - margin;
-    const float areaH = areaBottom - areaTop;
 
     // --- the ring: the scale, the chord, the four bell loops ---
     {
@@ -284,10 +301,6 @@ void GardenView::paint(juce::Graphics& g)
                        juce::Justification::centred);
         }
         // the middle: the scale's name; when it is your own, a button back to the Mode's
-        g.setColour(AmbLookAndFeel::dim());
-        g.setFont(juce::Font(juce::FontOptions(sr.R * 0.19f)));
-        g.drawText("scale", juce::Rectangle<float>(sr.c.x - sr.centreR, sr.c.y - sr.R * 0.5f, 2.0f * sr.centreR, sr.R * 0.25f),
-                   juce::Justification::centred);
         g.setColour(st.custom ? padColour() : AmbLookAndFeel::text());
         g.setFont(juce::Font(juce::FontOptions(sr.R * 0.26f).withStyle("Bold")));
         g.drawFittedText(st.custom ? "Custom" : EN_MODE_NAME[st.mode],
@@ -328,16 +341,13 @@ void GardenView::paint(juce::Graphics& g)
         }
     }
 
-    // --- the three pulse patterns, at the right ---
+    // --- the three pulse patterns, the last three of the five rings ---
     {
-        static const char* const names[EN_NDRUM] = {"Thump", "Hat", "Open hat"};
-        const float spacing = areaH / (float)EN_NDRUM;
-        const float rr = spacing * 0.38f, k = rr / 13.0f;   // k: the hardware's pixels
-        const float labelW = 44.0f * s;
-        const float cx = b.getRight() - 16.0f * s - labelW - rr - 4.0f * s;
+        const PanelLayout L = panelLayout(b);
+        const float rr = L.D * 0.40f, k = rr / 13.0f;   // k: the hardware's pixels
         for (int d = 0; d < EN_NDRUM; ++d)
         {
-            const Point<float> c(cx, areaTop + spacing * ((float)d + 0.5f));
+            const Point<float> c(L.x[2 + d], L.ringY);
             const int n = EN_DRUM_N[d];
             const float glow = st.drumGlow[(size_t)d];
             for (int i = 0; i < n; ++i)
@@ -356,11 +366,15 @@ void GardenView::paint(juce::Graphics& g)
             }
             if (glow > 0.03f)
                 disc(g, c, (1.0f + 4.0f * glow) * k, mix(AmbLookAndFeel::card(), pulseColour(), glow));
-            g.setColour(AmbLookAndFeel::dim());
-            g.setFont(juce::Font(juce::FontOptions(9.5f * s)));
-            g.drawText(names[d], juce::Rectangle<float>(c.x + rr + 8.0f * s, c.y - 7.0f * s, labelW + 8.0f * s, 14.0f * s),
-                       juce::Justification::centredLeft);
         }
+
+        // a caption under each of the five rings
+        static const char* const captions[5] = {"Scale", "Garden", "Thump", "Hat", "Open hat"};
+        g.setColour(AmbLookAndFeel::dim());
+        g.setFont(juce::Font(juce::FontOptions(10.5f * L.s)));
+        for (int i = 0; i < 5; ++i)
+            g.drawText(captions[i], juce::Rectangle<float>(L.x[i] - L.D * 0.5f, L.ringY + L.D * 0.5f + 1.0f * L.s, L.D, L.labelH),
+                       juce::Justification::centred);
     }
 }
 
