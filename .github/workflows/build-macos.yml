@@ -24,7 +24,11 @@ jobs:
           bash .github/scripts/annotate.sh settings build/settings.txt 0
 
       - name: Build the headless tests
-        run: cmake --build build --config Release --target render_test rate_test plugin_test echo_test scales_test -j 4
+        run: |
+          set +e
+          cmake --build build --config Release --target render_test rate_test plugin_test echo_test scales_test -j 4 > build/tests-build.txt 2>&1; status=$?
+          if [ $status -ne 0 ]; then grep -E "error|Error" build/tests-build.txt | head -20 | while read -r l; do echo "::error::${l}"; done; fi
+          exit $status
 
       - name: "render_test, twice (two fresh processes must print identical output)"
         run: |
