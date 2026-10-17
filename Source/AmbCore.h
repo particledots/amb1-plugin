@@ -20,6 +20,7 @@ struct AmbControls
     bool freeze = false;
     bool nextToggle = false;   // every change of this flag asks for the next chord
     bool syncToHost = false;   // follow the host's tempo (see AmbCore::setHostTempo) instead of the Tempo parameter
+    uint32_t scale = 0;        // a scale of your own (see Scale.h: relative to the root); 0 = the Mode's scale
     AmbControls();             // engine defaults
 };
 
@@ -56,6 +57,7 @@ private:
     Resampler resampler_;
     std::array<int, P_NPARAMS> last_{};
     bool lastPlay_ = false, lastFreeze_ = false, lastNext_ = false;
+    int lastPool_ = 0;   // the scale last posted to the engine (INT_MIN: none yet)
     std::atomic<bool> regrow_{false};
     float lastGain_ = 1.0f;
     // Tempo sync: while on, the engine's clock is driven by MIDI-clock-style ticks (24 per beat) made from the

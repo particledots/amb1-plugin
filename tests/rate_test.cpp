@@ -12,6 +12,7 @@
 #include <string>
 #include <vector>
 #include "AmbCore.h"
+#include "Scale.h"
 #include "GardenState.h"
 
 static const double kPi = 3.14159265358979323846;
@@ -428,12 +429,134 @@ static void reprepareTests()
     report("re-prepared with Play on: playing, not frozen", en_playing == 1 && en_frozen == 0);
 }
 
+
+// A scale of your own (v0.6): the rules, what the engine does with it, and that nothing changes without one.
+// "In the pool" means: every pitch class of the chord the pad plays (en_chord, MIDI notes) is in the absolute scale.
+static bool chordInPool(uint32_t absPool)
+{
+    for (int k = 0; k < EN_NPAD; ++k)
+        if (!(absPool >> (en_chord[k] % 12) & 1u))
+            return false;
+    return (absPool >> (en_chord_root % 12) & 1u) != 0u;
+}
+
+// Run `seconds`, looking at the chord every 20 ms; count the looks and how many had a note outside `absPool`.
+static int gChordChanges = 0;   // how many times the chord changed during the last watchChord()
+static void watchChord(AmbCore& core, const AmbControls& c, double seconds, uint32_t absPool, int& looks, int& outside)
+{
+    std::vector<float> L(960), R(960);
+    looks = outside = 0;
+    gChordChanges = 0;
+    uint64_t prev = 0;
+    for (double t = 0.0; t < seconds; t += 0.02)
+    {
+        core.apply(c);
+        core.render(L.data(), R.data(), 960, 1.0f);   // 20 ms at 48 kHz
+        ++looks;
+        if (!chordInPool(absPool))
+            ++outside;
+        uint64_t now = en_chord_root;
+        for (int k = 0; k < EN_NPAD; ++k)
+            now = now * 131u + en_chord[k];
+        if (looks > 1 && now != prev)
+            ++gChordChanges;
+        prev = now;
+    }
+}
+
+static void scaleTests()
+{
+    printf("a scale of your own\n");
+    using namespace amb1scale;
+    char t[160];
+    {
+        const uint32_t ionian = modePool(MODE_IONIAN);
+        uint32_t out = 0;
+        report("the pool rules: valid needs the root, 12 bits at most, 3 notes",
+               valid(0x091u) && !valid(0u) && !valid(0x003u) && !valid(0x002u | 0x004u | 0x008u) && !valid(0x1091u) && valid(ionian));
+        report("toggling the root is refused", toggle(ionian, 0, 0, out) == Toggle::RootStays &&
+               toggle(ionian, 2, 2, out) == Toggle::RootStays);
+        report("toggling a note in adds it (C ionian + C#)", toggle(ionian, 0, 1, out) == Toggle::Changed && out == (ionian | 2u));
+        report("the note is counted from the root (root D: E is 2 above)", toggle(0x091u, 2, 4, out) == Toggle::Changed && out == (0x091u | 4u));
+        report("toggling a note out takes it out (C ionian - B)", toggle(ionian, 0, 11, out) == Toggle::Changed && out == (ionian & ~(1u << 11)));
+        report("fewer than 3 notes is refused", toggle(0x091u, 0, 4, out) == Toggle::TooFew && toggle(0x091u, 0, 7, out) == Toggle::TooFew);
+        report("a custom scale equal to the Mode's is not custom; a valid other one is; an invalid one is ignored",
+               !isCustom(ionian, MODE_IONIAN) && isCustom(0x091u, MODE_IONIAN) && !isCustom(0x002u, MODE_IONIAN) &&
+               effective(0x002u, MODE_IONIAN) == ionian && effective(0u, MODE_DORIAN) == modePool(MODE_DORIAN) &&
+               effective(0x091u, MODE_IONIAN) == 0x091u);
+        report("turned to a root: C ionian is 0xAB5, D with the same shape is 0xAD6", toAbsolute(ionian, 0) == 0xAB5u &&
+               toAbsolute(ionian, 2) == 0xAD6u);
+    }
+
+    // The engine plays your scale: a lopsided 5-note one (root, minor 2nd, major 3rd, tritone, major 6th).
+    const uint32_t mine = 1u | 1u << 1 | 1u << 4 | 1u << 6 | 1u << 9;
+    AmbCore core;
+    core.acquire();
+    AmbControls c = controlsFor(0);
+    const int root = c.par[(size_t)P_ROOT], mode = c.par[(size_t)P_MODE];
+    const uint32_t absMine = toAbsolute(mine, root), absMode = toAbsolute(modePool(mode), root);
+    int looks = 0, outside = 0;
+
+    core.prepare(48000.0, c);   // no scale of your own: the Mode's
+    watchChord(core, c, 20.0, absMode, looks, outside);
+    snprintf(t, sizeof t, "(%d looks, %d outside)", looks, outside);
+    report("no scale of your own: every chord note is in the Mode's scale", outside == 0, t);
+    watchChord(core, c, 20.0, absMine, looks, outside);
+    snprintf(t, sizeof t, "(%d of %d looks outside the 5-note scale: the test can tell)", outside, looks);
+    report("control: with the Mode's scale, chord notes do fall outside the 5-note scale", outside > 0, t);
+
+    c.scale = mine;   // changed while playing
+    core.apply(c);
+    std::vector<float> L(960), R(960);
+    for (int i = 0; i < 100; ++i)   // 2 s to settle (the pad moves to the new chord)
+    {
+        core.apply(c);
+        core.render(L.data(), R.data(), 960, 1.0f);
+    }
+    watchChord(core, c, 180.0, absMine, looks, outside);
+    snprintf(t, sizeof t, "(%d looks, %d outside, the chord changed %d times)", looks, outside, gChordChanges);
+    report("your scale set while playing: every chord note is in it for 180 s, through chord changes",
+           outside == 0 && gChordChanges >= 3, t);
+
+    core.prepare(44100.0, c);   // a re-prepare (sample-rate change, audio stop/start) keeps it
+    watchChord(core, c, 20.0, absMine, looks, outside);
+    snprintf(t, sizeof t, "(%d looks, %d outside)", looks, outside);
+    report("after a re-prepare with your scale: every chord note is in it", outside == 0, t);
+
+    c.scale = 0;   // back to the Mode's
+    for (int i = 0; i < 100; ++i)
+    {
+        core.apply(c);
+        core.render(L.data(), R.data(), 960, 1.0f);
+    }
+    watchChord(core, c, 30.0, absMode, looks, outside);
+    snprintf(t, sizeof t, "(%d looks, %d outside)", looks, outside);
+    report("scale cleared: back to the Mode's scale", outside == 0, t);
+
+    c.scale = 0x002u;   // not a scale (no root, 1 note): ignored, the Mode's scale stays
+    core.prepare(48000.0, c);
+    watchChord(core, c, 20.0, absMode, looks, outside);
+    snprintf(t, sizeof t, "(%d looks, %d outside)", looks, outside);
+    report("an invalid scale is ignored (the Mode's scale sounds)", outside == 0, t);
+
+    // The Garden's ring follows it.
+    {
+        const int lv[4] = {100, 100, 100, 100};
+        const GardenState a = GardenState::capture(false, root, mode, lv);
+        const GardenState b = GardenState::capture(false, root, mode, lv, mine);
+        const GardenState d = GardenState::capture(false, root, mode, lv, modePool(mode));
+        report("garden state: your scale is the ring's scale and says custom", b.custom && b.pool == absMine && !a.custom &&
+               a.pool == absMode && !d.custom && d.pool == absMode);
+    }
+}
+
 int main()
 {
     resamplerTests();
     coreTests();
     gardenTests();
     reprepareTests();
+    scaleTests();
     printf(gOk ? "PASS\n" : "FAIL\n");
     return gOk ? 0 : 1;
 }

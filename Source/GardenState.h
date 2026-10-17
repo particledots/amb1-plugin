@@ -21,6 +21,7 @@ struct GardenState
     bool playing = false, frozen = false, external = false;
     int root = 0;          // the Root parameter (0 = C), the pitch class marked in the ring
     int mode = 0;          // the Mode parameter
+    bool custom = false;   // the scale is one of your own, not the Mode's (the hardware shows "Custom")
     uint32_t pool = 0;     // the scale as absolute pitch classes, bit 0 = C
     uint32_t chord = 0;    // the chord's pitch classes, bit 0 = C
     char chordName[16] = "";
@@ -37,6 +38,7 @@ struct GardenState
     std::array<uint32_t, EN_NDRUM> drumPat{};
 
     // Copy the engine's state. `layerPercent` are the Pad, Bells, Bass and Pulse parameters (0..100); `root` and
-    // `mode` the Root and Mode parameters. `live` says whether this instance owns the engine.
-    static GardenState capture(bool live, int root, int mode, const int (&layerPercent)[4]);
+    // `mode` the Root and Mode parameters. `live` says whether this instance owns the engine. `customScale` is
+    // the scale of your own (relative to the root, see Scale.h), 0 = the Mode's.
+    static GardenState capture(bool live, int root, int mode, const int (&layerPercent)[4], uint32_t customScale = 0);
 };

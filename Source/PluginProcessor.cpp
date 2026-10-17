@@ -73,9 +73,51 @@ AmbProcessor::AmbProcessor()
     rawNext_ = apvts.getRawParameterValue("next");
     rawMaster_ = apvts.getRawParameterValue("master");
     rawSync_ = apvts.getRawParameterValue("sync");
+    apvts.addParameterListener("mode", this);
 }
 
-AmbProcessor::~AmbProcessor() { core_.release(); }
+AmbProcessor::~AmbProcessor()
+{
+    apvts.removeParameterListener("mode", this);
+    core_.release();
+}
+
+int AmbProcessor::paramValue(int p) const
+{
+    if (p < 0 || p >= P_NPARAMS || raw_[(size_t)p] == nullptr)
+        return 0;
+    const int v = juce::roundToInt(raw_[(size_t)p]->load());
+    return isChoice(p) ? v + en_param_info(p)->lo : v;
+}
+
+uint32_t AmbProcessor::customScale() const
+{
+    const uint32_t packed = customPacked_.load();
+    const uint32_t mask = packed & 0xFFFFu;
+    return (amb1scale::valid(mask) && (int)(packed >> 16) == paramValue(P_MODE)) ? mask : 0u;
+}
+
+amb1scale::Toggle AmbProcessor::toggleScaleNote(int pitchClass)
+{
+    const int mode = paramValue(P_MODE);
+    uint32_t out = 0;
+    const auto r = amb1scale::toggle(amb1scale::effective(customScale(), mode), paramValue(P_ROOT), pitchClass, out);
+    if (r == amb1scale::Toggle::Changed)   // back on the Mode's own scale: nothing of your own to keep
+        customPacked_.store(out == amb1scale::modePool(mode) ? 0u : packScale(mode, out));
+    return r;
+}
+
+void AmbProcessor::useModeScale() { customPacked_.store(0u); }
+
+// Any change of Mode (the menu, the host, automation) puts the Mode's own scale back.
+void AmbProcessor::parameterChanged(const juce::String& parameterID, float newValue)
+{
+    if (parameterID != "mode")
+        return;
+    uint32_t packed = customPacked_.load();
+    if ((packed & 0xFFFFu) != 0u && (int)(packed >> 16) != juce::roundToInt(newValue) + (int)en_param_info(P_MODE)->lo)
+        customPacked_.compare_exchange_strong(packed, 0u);
+}
 
 void AmbProcessor::readControls(AmbControls& c) const
 {
@@ -92,6 +134,7 @@ void AmbProcessor::readControls(AmbControls& c) const
     c.freeze = rawFreeze_->load() > 0.5f;
     c.nextToggle = rawNext_->load() > 0.5f;
     c.syncToHost = rawSync_->load() > 0.5f;
+    c.scale = customScale();
 }
 
 void AmbProcessor::prepareToPlay(double sampleRate, int)
@@ -170,6 +213,7 @@ void AmbProcessor::setCurrentProgram(int index)
     if (index < 0 || index >= EN_NPIECES)
         return;
     currentProgram_.store(index);
+    customPacked_.store(0u);   // a piece brings its own scale (its Mode's), as on the hardware
     int16_t par[P_NPARAMS];
     uint16_t pool;
     en_piece(index, par, &pool);
@@ -183,6 +227,17 @@ void AmbProcessor::getStateInformation(juce::MemoryBlock& destData)
 {
     auto state = apvts.copyState();
     state.setProperty("program", currentProgram_.load(), nullptr);
+    // A scale of your own is saved as two extra entries; with none, they are not there (the format of v0.5 and before).
+    if (const uint32_t mask = customScale(); mask != 0u)
+    {
+        state.setProperty("scale", (int)mask, nullptr);
+        state.setProperty("scaleMode", paramValue(P_MODE), nullptr);
+    }
+    else
+    {
+        state.removeProperty("scale", nullptr);
+        state.removeProperty("scaleMode", nullptr);
+    }
     if (auto xml = state.createXml())
         copyXmlToBinary(*xml, destData);
 }
@@ -202,6 +257,14 @@ void AmbProcessor::setStateInformation(const void* data, int sizeInBytes)
             if (!savedSync)
                 if (auto* prm = apvts.getParameter("sync"))
                     prm->setValueNotifyingHost(prm->getDefaultValue());
+            // The scale of your own comes back only if the state has it and it was made under the Mode the state
+            // holds; a project saved without one (or before v0.6) gets the Mode's scale, as it always did.
+            const auto modeNode = tree.getChildWithProperty("id", "mode");
+            const int savedMode = modeNode.isValid() ? (int)modeNode.getProperty("value", -1) + (int)en_param_info(P_MODE)->lo : -1;
+            const int savedScale = tree.hasProperty("scale") ? (int)tree.getProperty("scale") : 0;
+            const bool keep = savedScale > 0 && amb1scale::valid((uint32_t)savedScale) && savedMode >= 0 &&
+                              (int)tree.getProperty("scaleMode", -1) == savedMode;
+            customPacked_.store(keep ? packScale(savedMode, (uint32_t)savedScale) : 0u);
         }
     }
 }

@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-only
 #include "GardenState.h"
+#include "Scale.h"
 #include <algorithm>
 
 namespace
@@ -7,16 +8,16 @@ namespace
 float clamp01(float x) { return x < 0.0f ? 0.0f : x > 1.0f ? 1.0f : x; }
 }
 
-GardenState GardenState::capture(bool live, int root, int mode, const int (&layerPercent)[4])
+GardenState GardenState::capture(bool live, int root, int mode, const int (&layerPercent)[4], uint32_t customScale)
 {
     GardenState s;
     s.live = live;
     s.root = std::clamp(root, 0, 11);
     s.mode = std::clamp(mode, 0, (int)EN_NMODES - 1);
 
-    // the scale: the mode's pool is relative to the root; rotate it to absolute pitch classes (as AMB-1 does)
-    const uint32_t rel = EN_MODE_POOL[s.mode], r = (uint32_t)s.root;
-    s.pool = ((rel << r) | (rel >> (12u - r))) & 0xFFFu;
+    // the scale: the mode's pool (or your own) is relative to the root; rotate it to absolute pitch classes (as AMB-1 does)
+    s.custom = amb1scale::isCustom(customScale, s.mode);
+    s.pool = amb1scale::toAbsolute(amb1scale::effective(customScale, s.mode), s.root);
 
     if (!live)
         return s;   // another instance owns the engine: its state is not ours to show

@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-only
 #include "AmbCore.h"
+#include "Scale.h"
 #include <algorithm>
 #include <climits>
 #include <cmath>
@@ -47,6 +48,7 @@ void AmbCore::prepare(double hostRate, const AmbControls& c)
     en_set(P_MIDI, 0);   // MIDI out is a no-op in the plugin; keep the engine from generating it
 
     last_.fill(INT_MIN);
+    lastPool_ = INT_MIN;
     lastPlay_ = false;
     lastFreeze_ = false;
     lastNext_ = c.nextToggle;   // starting up is not a "next chord"
@@ -74,6 +76,9 @@ void AmbCore::apply(const AmbControls& c)
         tickCountdown_ = 0.0;   // turning sync on: the first tick comes at once
     sync_ = c.syncToHost;
 
+    // The scale that sounds: a valid scale of your own, else the Mode's (Scale.h).
+    auto poolFor = [&c](int mode) { return (int)amb1scale::effective(c.scale, mode); };
+
     for (int i = 0; i < P_NPARAMS; ++i)
     {
         if (i == P_MIDI)
@@ -89,8 +94,22 @@ void AmbCore::apply(const AmbControls& c)
         {
             en_set(i, v);
             if (i == P_MODE)
-                en_pool(EN_MODE_POOL[v]);   // the mode loads its scale, as on the FM-1
+            {
+                lastPool_ = poolFor(v);   // the mode loads its scale, as on the FM-1 (or your own, if you made one)
+                en_pool((uint32_t)lastPool_);
+            }
             last_[(size_t)i] = v;
+        }
+    }
+    // A change of the scale alone (the Mode did not change): post it. With no scale of your own this never
+    // fires, so everything behaves exactly as before.
+    {
+        const en_param_t* info = en_param_info(P_MODE);
+        const int pool = poolFor(std::clamp(c.par[(size_t)P_MODE], (int)info->lo, (int)info->hi));
+        if (pool != lastPool_)
+        {
+            lastPool_ = pool;
+            en_pool((uint32_t)pool);
         }
     }
     if (c.play != lastPlay_)

@@ -6,6 +6,8 @@
 #include <string>
 #include <vector>
 #include "PluginProcessor.h"
+#include "GardenView.h"
+#include "Scale.h"
 
 static bool gOk = true;
 static void report(const char* what, bool ok, const std::string& detail = "")
@@ -227,6 +229,135 @@ int main()
             juce::AudioProcessor::copyXmlToBinary(*xml, old);
         b.setStateInformation(old.getData(), (int)old.getSize());
         report("a project saved before Tempo sync existed loads with it off", removed && getValue(b, "sync") == 0.0f);
+    }
+
+
+    printf("a scale of your own\n");
+    {
+        using amb1scale::Toggle;
+        AmbProcessor p;
+        start(p, 48000.0, 512);
+        p.setCurrentProgram(0);   // the Garden
+        const int root = p.paramValue(P_ROOT), mode = p.paramValue(P_MODE);
+        const uint32_t modeScale = amb1scale::modePool(mode);
+        report("no scale of your own at first", p.customScale() == 0);
+
+        // a pitch class outside the Mode's scale, and its distance from the root
+        int outRel = 1;
+        while (modeScale >> outRel & 1u)
+            ++outRel;
+        const int outPc = (root + outRel) % 12;
+        report("the root cannot be toggled out", p.toggleScaleNote(root) == Toggle::RootStays && p.customScale() == 0);
+        report("a note outside the scale goes in; the scale is now your own",
+               p.toggleScaleNote(outPc) == Toggle::Changed && p.customScale() == (modeScale | 1u << outRel));
+        report("the same note again takes it out: back on the Mode's scale (nothing of your own kept)",
+               p.toggleScaleNote(outPc) == Toggle::Changed && p.customScale() == 0);
+
+        // down to three notes: the root and the first two others of the Mode's scale
+        int kept = 0;
+        for (int rel = 1; rel < 12; ++rel)
+            if (modeScale >> rel & 1u)
+            {
+                if (kept < 2)
+                    ++kept;
+                else
+                    p.toggleScaleNote((root + rel) % 12);
+            }
+        const uint32_t three = p.customScale();
+        report("taken down to three notes", amb1scale::count(three) == 3 && (three & 1u) != 0u);
+        int lastRel = 11;
+        while (!(three >> lastRel & 1u))
+            --lastRel;
+        report("a fourth removal is refused (3 notes at least)",
+               p.toggleScaleNote((root + lastRel) % 12) == Toggle::TooFew && p.customScale() == three);
+
+        // the sound: after a couple of seconds every chord note is in this scale
+        const uint32_t absThree = amb1scale::toAbsolute(three, root);
+        run(p, 3.0, 48000.0, 512);
+        bool inScale = true;
+        for (int i = 0; i < 40; ++i)
+        {
+            run(p, 0.25, 48000.0, 512);
+            for (int k = 0; k < EN_NPAD; ++k)
+                inScale = inScale && (absThree >> (en_chord[k] % 12) & 1u) != 0u;
+        }
+        report("playing: every chord note is in the 3-note scale", inScale);
+
+        // Root keeps it (the scale is relative to the root); Mode, program and a re-choice of the same piece do not
+        setValue(p, "root", (float)((root + 3) % 12));
+        report("changing Root keeps your scale", p.customScale() == three);
+        setValue(p, "root", (float)root);
+
+        juce::MemoryBlock saved;
+        p.getStateInformation(saved);
+        {
+            AmbProcessor q;
+            q.setStateInformation(saved.getData(), (int)saved.getSize());
+            report("a saved project brings your scale back", q.customScale() == three && q.paramValue(P_MODE) == mode);
+        }
+        {
+            auto xml = juce::AudioProcessor::getXmlFromBinary(saved.getData(), (int)saved.getSize());
+            const bool has = xml != nullptr && xml->hasAttribute("scale") && xml->hasAttribute("scaleMode");
+            report("the state holds it as two extra entries, not as a parameter", has);
+            if (xml != nullptr)   // saved under another Mode than the one in the state: not trusted
+            {
+                xml->setAttribute("scaleMode", (mode + 1) % (int)EN_NMODES);
+                juce::MemoryBlock odd;
+                juce::AudioProcessor::copyXmlToBinary(*xml, odd);
+                AmbProcessor q;
+                q.setStateInformation(odd.getData(), (int)odd.getSize());
+                report("a scale saved under a different Mode than the state's is not used", q.customScale() == 0);
+            }
+        }
+        {
+            AmbProcessor fresh;   // a state with no scale in it, the format before v0.6
+            juce::MemoryBlock blob;
+            fresh.getStateInformation(blob);
+            auto xml = juce::AudioProcessor::getXmlFromBinary(blob.getData(), (int)blob.getSize());
+            report("a state with no custom scale has no scale entries", xml != nullptr && !xml->hasAttribute("scale") &&
+                   !xml->hasAttribute("scaleMode"));
+            p.setStateInformation(blob.getData(), (int)blob.getSize());
+            report("loading such a project into an instance with a scale of its own gives the Mode's scale", p.customScale() == 0);
+        }
+
+        // Mode, program: the Mode's / the piece's scale again
+        p.setCurrentProgram(0);
+        p.toggleScaleNote(outPc);   // a note outside the Mode's scale: yours now
+        const bool haveOwn = p.customScale() != 0;
+        setValue(p, "mode", (float)((mode + 1) % (int)EN_NMODES));
+        report("choosing another Mode goes back to that Mode's scale", haveOwn && p.customScale() == 0);
+        setValue(p, "mode", (float)mode);
+        report("and choosing the old Mode again does not bring yours back", p.customScale() == 0);
+
+        p.setCurrentProgram(0);
+        p.toggleScaleNote(outPc);
+        const bool own2 = p.customScale() != 0;
+        p.setCurrentProgram(0);   // the same piece again
+        report("choosing a piece (even the same one) goes back to its scale", own2 && p.customScale() == 0);
+
+        p.toggleScaleNote(outPc);
+        const bool own3 = p.customScale() != 0;
+        p.useModeScale();
+        report("\"Custom\" clicked: back to the Mode's scale", own3 && p.customScale() == 0);
+        p.releaseResources();
+    }
+    {
+        // the ring's click zones (the geometry the garden panel draws with)
+        bool ok = true;
+        for (auto panel : {juce::Rectangle<float>(0, 0, 820, 160), juce::Rectangle<float>(0, 0, 1500, 300), juce::Rectangle<float>(0, 0, 560, 100)})
+        {
+            for (int pc = 0; pc < 12; ++pc)
+                ok = ok && GardenView::noteAtPoint(panel, GardenView::notePosition(panel, pc)) == pc;
+            const juce::Point<float> middle(panel.getCentreX(), panel.getCentreY());
+            ok = ok && GardenView::noteAtPoint(panel, middle) == -1 &&
+                 GardenView::noteAtPoint(panel, juce::Point<float>(2.0f, 2.0f)) == -1 &&
+                 GardenView::noteAtPoint(panel, juce::Point<float>(panel.getRight() - 2.0f, panel.getBottom() - 2.0f)) == -1;
+            // halfway between two neighbours is on one of them or neither, never a third
+            const auto a = GardenView::notePosition(panel, 0), b = GardenView::notePosition(panel, 1);
+            const int mid = GardenView::noteAtPoint(panel, (a + b) * 0.5f);
+            ok = ok && (mid == 0 || mid == 1 || mid == -1);
+        }
+        report("a click on a note of the ring finds that note, a click elsewhere finds none", ok);
     }
 
     printf(gOk ? "PASS\n" : "FAIL\n");

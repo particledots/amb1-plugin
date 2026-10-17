@@ -37,6 +37,23 @@ void square(juce::Graphics& g, Point<float> p, float half, Colour c)
 }
 constexpr float kLoopRadius[EN_NLOOP] = {36.0f, 43.0f, 50.0f, 57.0f};   // the hardware's pixels
 constexpr float kDesignHeight = 160.0f;   // the panel's height at scale 1
+
+// Where the ring sits in the panel, shared by paint() and by clicks. u: one hardware pixel.
+struct RingGeometry
+{
+    Point<float> c;
+    float u;
+    float s;
+};
+RingGeometry ringGeometry(juce::Rectangle<float> b)
+{
+    const float s = b.getHeight() / kDesignHeight;
+    const float strip = 24.0f * s, margin = 7.0f * s;
+    const float areaTop = strip + margin * 0.5f, areaBottom = b.getBottom() - margin;
+    const float areaH = areaBottom - areaTop;
+    return {Point<float>(b.getCentreX(), areaTop + areaH * 0.5f), areaH / 122.0f, s};   // 122 = the outer loop's diameter plus a disc
+}
+constexpr float kScaleRadius = 24.0f;   // the scale's ring, in hardware pixels
 } // namespace
 
 GardenView::GardenView(AmbProcessor& p) : proc_(p)
@@ -48,19 +65,21 @@ GardenView::GardenView(AmbProcessor& p) : proc_(p)
     rawMode_ = proc_.apvts.getRawParameterValue("mode");
     rawTempo_ = proc_.apvts.getRawParameterValue("tempo");
     setTooltip("The garden, live. Middle: the scale as a ring (C at the top) with the chord lit and named, and the four "
-               "bell loops going round it. Left: how loud Pad, Bells, Bass and Pulse are right now. Right: the three "
-               "pulse patterns (thump, hat, open hat). Top right: how far to the next chord.");
+               "bell loops going round it. Click a note on the ring to add it to the scale or take it out (the root "
+               "stays; at least three notes). \"Custom\" in the top line means the scale is your own: click it to go back "
+               "to the Mode's. Left: how loud Pad, Bells, Bass and Pulse are right now. Right: the three pulse patterns "
+               "(thump, hat, open hat). Top right: how far to the next chord.");
     setOpaque(false);
     timerCallback();
     startTimerHz(20);
 }
 
-uint64_t GardenView::signature(const GardenState& s, int tempo)
+uint64_t GardenView::signature(const GardenState& s, int tempo, bool noticeOn)
 {
     uint64_t h = 1469598103934665603ull;
     auto in = [&h](uint64_t v) { h = (h ^ v) * 1099511628211ull; };
     in((uint64_t)s.live | (uint64_t)s.playing << 1 | (uint64_t)s.frozen << 2 | (uint64_t)s.external << 3 |
-       (uint64_t)s.pulseRest << 4);
+       (uint64_t)s.pulseRest << 4 | (uint64_t)s.custom << 5 | (uint64_t)noticeOn << 6);
     in((uint64_t)s.root | (uint64_t)s.mode << 4 | (uint64_t)tempo << 8);
     in(s.pool | (uint64_t)s.chord << 12);
     for (const char* c = s.chordName; *c != 0; ++c)
@@ -89,8 +108,9 @@ void GardenView::timerCallback()
         return;   // nobody is looking
     const int levels[4] = {(int)raw_[0]->load(), (int)raw_[1]->load(), (int)raw_[2]->load(), (int)raw_[3]->load()};
     const int tempo = (int)rawTempo_->load();
-    GardenState now = GardenState::capture(proc_.ownsEngine(), (int)rawRoot_->load(), (int)rawMode_->load(), levels);
-    const uint64_t sig = signature(now, tempo);
+    GardenState now = GardenState::capture(proc_.ownsEngine(), (int)rawRoot_->load(), (int)rawMode_->load(), levels,
+                                           proc_.customScale());
+    const uint64_t sig = signature(now, tempo, noticeActive());
     if (haveSig_ && sig == lastSig_)
         return;   // nothing a viewer could see has changed: skip the repaint
     haveSig_ = true;
@@ -119,7 +139,7 @@ void GardenView::paint(juce::Graphics& g)
         const float x = b.getX() + 14.0f * s;
         g.setFont(juce::Font(juce::FontOptions(12.5f * s).withStyle("Bold")));
         g.setColour(st.playing ? AmbLookAndFeel::text() : AmbLookAndFeel::dim());
-        const juce::String key = juce::String(EN_NOTE_NAME[st.root]) + " " + EN_MODE_NAME[st.mode];
+        const juce::String key = juce::String(EN_NOTE_NAME[st.root]) + " " + (st.custom ? "Custom" : EN_MODE_NAME[st.mode]);
         g.drawText(key, juce::Rectangle<float>(x, stripY, 112.0f * s, stripH), juce::Justification::centredLeft);
         g.setFont(juce::Font(juce::FontOptions(11.5f * s)));
         g.setColour(AmbLookAndFeel::dim());
@@ -163,13 +183,21 @@ void GardenView::paint(juce::Graphics& g)
         }
     }
 
+    if (noticeActive())   // why the last click on the ring did nothing, in the middle of the top line
+    {
+        g.setFont(juce::Font(juce::FontOptions(11.5f * s).withStyle("Bold")));
+        g.setColour(pulseColour());
+        g.drawText(notice_, juce::Rectangle<float>(b.getCentreX() - 130.0f * s, stripY, 260.0f * s, stripH), juce::Justification::centred);
+    }
+
     const float areaTop = strip + margin * 0.5f, areaBottom = b.getBottom() - margin;
     const float areaH = areaBottom - areaTop;
 
     // --- the ring: the scale, the chord, the four bell loops ---
     {
-        const float u = areaH / 122.0f;   // 122 = the outer loop's diameter plus a disc, in hardware pixels
-        const Point<float> c(b.getCentreX(), areaTop + areaH * 0.5f);
+        const RingGeometry ring = ringGeometry(b);
+        const float u = ring.u;
+        const Point<float> c = ring.c;
 
         for (int l = 0; l < EN_NLOOP; ++l)
         {
@@ -191,7 +219,7 @@ void GardenView::paint(juce::Graphics& g)
 
         for (int i = 0; i < 12; ++i)   // the scale, C at the top
         {
-            const auto p = polar(c, 24.0f * u, i, 12);
+            const auto p = polar(c, kScaleRadius * u, i, 12);
             const bool inScale = (st.pool >> i & 1u) != 0u, inChord = (st.chord >> i & 1u) != 0u;
             if (i == st.root)
                 disc(g, p, 5.0f * u, AmbLookAndFeel::text());   // the root: ringed in ink
@@ -269,4 +297,65 @@ void GardenView::paint(juce::Graphics& g)
                        juce::Justification::centredLeft);
         }
     }
+}
+
+bool GardenView::noticeActive() const { return notice_.isNotEmpty() && juce::Time::getMillisecondCounter() < noticeUntil_; }
+
+juce::Rectangle<float> GardenView::keyLabelBounds() const
+{
+    const auto b = getLocalBounds().toFloat();
+    const float s = b.getHeight() / kDesignHeight;
+    return {b.getX() + 14.0f * s, 4.0f * s, 112.0f * s, 16.0f * s};
+}
+
+juce::Point<float> GardenView::notePosition(juce::Rectangle<float> panel, int pc)
+{
+    const RingGeometry ring = ringGeometry(panel);
+    return polar(ring.c, kScaleRadius * ring.u, pc, 12);
+}
+
+int GardenView::noteAtPoint(juce::Rectangle<float> panel, juce::Point<float> where)
+{
+    const RingGeometry ring = ringGeometry(panel);
+    int best = -1;
+    float bestDist = 6.5f * ring.u;   // neighbours are 12.4 u apart, so these zones never overlap
+    for (int i = 0; i < 12; ++i)
+    {
+        const float d = polar(ring.c, kScaleRadius * ring.u, i, 12).getDistanceFrom(where);
+        if (d <= bestDist)
+        {
+            bestDist = d;
+            best = i;
+        }
+    }
+    return best;
+}
+
+void GardenView::mouseMove(const juce::MouseEvent& e)
+{
+    const auto p = e.position;
+    const bool overLabel = shown_.custom && keyLabelBounds().contains(p);
+    setMouseCursor(overLabel || noteAtPoint(getLocalBounds().toFloat(), p) >= 0 ? juce::MouseCursor::PointingHandCursor : juce::MouseCursor::NormalCursor);
+}
+
+void GardenView::mouseDown(const juce::MouseEvent& e)
+{
+    if (shown_.custom && keyLabelBounds().contains(e.position))
+    {
+        proc_.useModeScale();
+        timerCallback();
+        return;
+    }
+    const int pc = noteAtPoint(getLocalBounds().toFloat(), e.position);
+    if (pc < 0)
+        return;
+    const auto result = proc_.toggleScaleNote(pc);
+    if (result == amb1scale::Toggle::RootStays)
+        notice_ = "The root stays (change it with Root)";
+    else if (result == amb1scale::Toggle::TooFew)
+        notice_ = "A scale needs at least 3 notes";
+    else
+        notice_ = juce::String();
+    noticeUntil_ = juce::Time::getMillisecondCounter() + 2000u;
+    timerCallback();
 }
