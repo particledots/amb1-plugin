@@ -249,6 +249,45 @@ int main()
             juce::AudioProcessor::copyXmlToBinary(*xml, old);
         b.setStateInformation(old.getData(), (int)old.getSize());
         report("a project saved before Tempo sync existed loads with it off", removed && getValue(b, "sync") == 0.0f);
+
+        // The drum levels (v0.10): 100 % by default; they are saved with the project; and a project saved before they
+        // existed (their entries taken out) loads at 100 %, even into an instance that has them turned down now.
+        const char* drumIds[3] = {"thumplvl", "hatlvl", "openlvl"};
+        bool defaults = true;
+        AmbProcessor d;
+        for (const char* id : drumIds)
+            defaults = defaults && juce::roundToInt(getValue(d, id)) == 100;
+        report("the three drum levels start at 100 %", defaults);
+        AmbProcessor e;
+        setValue(e, "thumplvl", 0.0f);
+        setValue(e, "hatlvl", 50.0f);
+        setValue(e, "openlvl", 150.0f);
+        juce::MemoryBlock drumSaved;
+        e.getStateInformation(drumSaved);
+        AmbProcessor f;
+        f.setStateInformation(drumSaved.getData(), (int)drumSaved.getSize());
+        report("saved drum levels come back (0, 50, 150 %)", juce::roundToInt(getValue(f, "thumplvl")) == 0 &&
+               juce::roundToInt(getValue(f, "hatlvl")) == 50 && juce::roundToInt(getValue(f, "openlvl")) == 150);
+        auto dx = juce::AudioProcessor::getXmlFromBinary(drumSaved.getData(), (int)drumSaved.getSize());
+        int taken = 0;
+        if (dx != nullptr)
+            for (const char* id : drumIds)
+                if (auto* child = dx->getChildByAttribute("id", id))
+                {
+                    dx->removeChildElement(child, true);
+                    ++taken;
+                }
+        juce::MemoryBlock oldDrums;
+        if (dx != nullptr)
+            juce::AudioProcessor::copyXmlToBinary(*dx, oldDrums);
+        AmbProcessor g;
+        setValue(g, "thumplvl", 0.0f);   // turned down now
+        setValue(g, "openlvl", 0.0f);
+        g.setStateInformation(oldDrums.getData(), (int)oldDrums.getSize());
+        bool back = taken == 3;
+        for (const char* id : drumIds)
+            back = back && juce::roundToInt(getValue(g, id)) == 100;
+        report("a project saved before the drum levels existed loads them at 100 %", back);
     }
 
 
