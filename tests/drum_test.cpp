@@ -91,7 +91,7 @@ int main(int argc, char** argv)
 
     struct Case { int t, h, o; };
     const Case cases[] = {{100, 100, 100}, {100, 0, 0}, {0, 100, 0}, {0, 0, 100}, {50, 0, 0}, {150, 0, 0}, {0, 50, 0},
-                          {0, 150, 0}, {0, 0, 50}, {0, 0, 150}};
+                          {0, 150, 0}, {0, 0, 50}, {0, 0, 150}, {0, 400, 0}, {0, 0, 400}};
     std::vector<double> r;
     for (const auto& c : cases)
     {
@@ -114,6 +114,12 @@ int main(int argc, char** argv)
         const double a = half[d] / full[d], b = more[d] / full[d];
         std::snprintf(t, sizeof t, "(50%% gives %.2f of 100%%, 150%% gives %.2f)", a, b);
         report((std::string(names[d]) + " follows its level").c_str(), a > 0.42 && a < 0.58 && b > 1.35 && b < 1.65, t);
+    }
+    for (int d = 1; d < 3; ++d)   // v0.12: the hats go up to 400 %
+    {
+        const double x = r[(size_t)(d == 1 ? 10 : 11)] / full[d];
+        std::snprintf(t, sizeof t, "(400%% gives %.2f of 100%%)", x);
+        report((std::string(names[d]) + " follows its level up to 400 %").c_str(), x > 3.4 && x < 4.6, t);
     }
     const double sumSq = full[0] * full[0] + full[1] * full[1] + full[2] * full[2];
     std::snprintf(t, sizeof t, "(together %.5f, the three alone add to %.5f)", r[0], std::sqrt(sumSq));

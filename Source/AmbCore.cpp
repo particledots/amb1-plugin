@@ -123,7 +123,7 @@ void AmbCore::apply(const AmbControls& c)
     // The drum levels (a direct call, like every engine call here: made from the thread that renders).
     for (int d = 0; d < EN_NDRUM; ++d)
     {
-        const int v = std::clamp(c.drum[(size_t)d], 0, 200);
+        const int v = std::clamp(c.drum[(size_t)d], 0, 400);
         if (v != lastDrum_[(size_t)d])
         {
             en_drum_gain(d, (float)v * 0.01f);

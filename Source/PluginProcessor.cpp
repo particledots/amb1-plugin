@@ -71,9 +71,11 @@ juce::AudioProcessorValueTreeState::ParameterLayout AmbProcessor::createLayout()
     // Added in v0.10, appended again: a level for each drum, on top of Pulse. 100 % = as before (the default).
     static const char* const drumIds[EN_NDRUM] = {"thumplvl", "hatlvl", "openlvl"};
     static const char* const drumNames[EN_NDRUM] = {"Thump", "Closed hat", "Open hat"};
+    // v0.12: the two hats go up to 400 % (they are far quieter than the thump at equal levels); the thump stays at 150 %.
+    static const int drumMax[EN_NDRUM] = {150, 400, 400};
     for (int d = 0; d < EN_NDRUM; ++d)
         layout.add(std::make_unique<juce::AudioParameterInt>(
-            juce::ParameterID{drumIds[d], 1}, drumNames[d], 0, 150, 100,
+            juce::ParameterID{drumIds[d], 1}, drumNames[d], 0, drumMax[d], 100,
             juce::AudioParameterIntAttributes().withLabel("%")));
     return layout;
 }

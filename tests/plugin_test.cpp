@@ -262,6 +262,14 @@ int main()
         setValue(e, "thumplvl", 0.0f);
         setValue(e, "hatlvl", 50.0f);
         setValue(e, "openlvl", 150.0f);
+        {   // v0.12: the hats reach 400 %, the thump stops at 150 %
+            AmbProcessor g;
+            setValue(g, "hatlvl", 400.0f);
+            setValue(g, "openlvl", 400.0f);
+            setValue(g, "thumplvl", 400.0f);
+            report("the hat levels reach 400 % and the thump stops at 150 %", juce::roundToInt(getValue(g, "hatlvl")) == 400 &&
+                   juce::roundToInt(getValue(g, "openlvl")) == 400 && juce::roundToInt(getValue(g, "thumplvl")) == 150);
+        }
         juce::MemoryBlock drumSaved;
         e.getStateInformation(drumSaved);
         AmbProcessor f;
