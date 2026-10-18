@@ -68,6 +68,13 @@ juce::AudioProcessorValueTreeState::ParameterLayout AmbProcessor::createLayout()
     for (int i = 0; i < amb1scale::kChoiceCount; ++i)
         scaleChoices.add(amb1scale::choiceName(i));
     layout.add(std::make_unique<juce::AudioParameterChoice>(juce::ParameterID{"scale", 1}, "Scale", scaleChoices, 0));
+    // Added in v0.10, appended again: a level for each drum, on top of Pulse. 100 % = as before (the default).
+    static const char* const drumIds[EN_NDRUM] = {"thumplvl", "hatlvl", "openlvl"};
+    static const char* const drumNames[EN_NDRUM] = {"Thump", "Closed hat", "Open hat"};
+    for (int d = 0; d < EN_NDRUM; ++d)
+        layout.add(std::make_unique<juce::AudioParameterInt>(
+            juce::ParameterID{drumIds[d], 1}, drumNames[d], 0, 150, 100,
+            juce::AudioParameterIntAttributes().withLabel("%")));
     return layout;
 }
 
@@ -87,6 +94,9 @@ AmbProcessor::AmbProcessor()
     rawMaster_ = apvts.getRawParameterValue("master");
     rawSync_ = apvts.getRawParameterValue("sync");
     rawScale_ = apvts.getRawParameterValue("scale");
+    rawDrum_[0] = apvts.getRawParameterValue("thumplvl");
+    rawDrum_[1] = apvts.getRawParameterValue("hatlvl");
+    rawDrum_[2] = apvts.getRawParameterValue("openlvl");
     apvts.addParameterListener("mode", this);
     apvts.addParameterListener("scale", this);
 }
@@ -213,6 +223,8 @@ void AmbProcessor::readControls(AmbControls& c) const
     c.freeze = rawFreeze_->load() > 0.5f;
     c.nextToggle = rawNext_->load() > 0.5f;
     c.syncToHost = rawSync_->load() > 0.5f;
+    for (int d = 0; d < EN_NDRUM; ++d)
+        c.drum[(size_t)d] = juce::roundToInt(rawDrum_[d]->load());
     const uint32_t own = customScale();
     c.scale = own != 0u ? own : amb1scale::libraryPool(libraryScale());   // yours, else the menu's, else (0) the Mode's
 }
@@ -390,10 +402,19 @@ void AmbProcessor::setStateInformation(const void* data, int sizeInBytes)
             // whatever it holds now; such a project must come back exactly as it was saved: sync off.
             const bool savedSync = tree.getChildWithProperty("id", "sync").isValid();
             const bool savedScaleMenu = tree.getChildWithProperty("id", "scale").isValid();
+            const bool savedDrum[EN_NDRUM] = {tree.getChildWithProperty("id", "thumplvl").isValid(),
+                                              tree.getChildWithProperty("id", "hatlvl").isValid(),
+                                              tree.getChildWithProperty("id", "openlvl").isValid()};
             apvts.replaceState(tree);
             if (!savedSync)
                 if (auto* prm = apvts.getParameter("sync"))
                     prm->setValueNotifyingHost(prm->getDefaultValue());
+            // And for the drum levels (v0.10): a project saved before them comes back at 100 %, as it sounded.
+            static const char* const drumIds[EN_NDRUM] = {"thumplvl", "hatlvl", "openlvl"};
+            for (int d = 0; d < EN_NDRUM; ++d)
+                if (!savedDrum[d])
+                    if (auto* prm = apvts.getParameter(drumIds[d]))
+                        prm->setValueNotifyingHost(prm->getDefaultValue());
             // The same for the Scale menu (v0.7): a project saved before it existed comes back on "Mode's own".
             if (!savedScaleMenu)
                 setScaleChoice(0);

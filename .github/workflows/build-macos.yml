@@ -26,7 +26,7 @@ jobs:
       - name: Build the headless tests
         run: |
           set +e
-          cmake --build build --config Release --target render_test rate_test plugin_test echo_test scales_test seed_test midifx_test fx_test -j 4 > build/tests-build.txt 2>&1; status=$?
+          cmake --build build --config Release --target render_test rate_test plugin_test echo_test scales_test seed_test midifx_test drum_test fx_test -j 4 > build/tests-build.txt 2>&1; status=$?
           if [ $status -ne 0 ]; then grep -E "error|Error" build/tests-build.txt | head -20 | while read -r l; do echo "::error::${l}"; done; fi
           exit $status
 
@@ -71,6 +71,14 @@ jobs:
           ./build/seed_test > build/seed_test.txt 2>&1; status=$?
           cat build/seed_test.txt
           bash .github/scripts/annotate.sh seed_test build/seed_test.txt $status
+          exit $status
+
+      - name: "drum_test (each drum has its own level)"
+        run: |
+          set +e
+          ./build/drum_test > build/drum_test.txt 2>&1; status=$?
+          cat build/drum_test.txt
+          bash .github/scripts/annotate.sh drum_test build/drum_test.txt $status
           exit $status
 
       - name: "midifx_test (the MIDI effect build's engine side - notes out, timing, Play off)"
@@ -197,6 +205,7 @@ jobs:
             build/auval_full.txt
             build/auval_midi_full.txt
             build/midifx_test.txt
+            build/drum_test.txt
             build/fx_test.txt
             build/render1.txt
             build/plugin_test.txt

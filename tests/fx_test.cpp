@@ -79,12 +79,12 @@ int main()
         const std::vector<std::string> expected = {
             "pad", "bells", "bass", "pulse", "density", "evolve", "drift", "hits", "echo", "etime", "reverb", "size",
             "bright", "swell", "btone", "motion", "tune", "tempo", "root", "mode", "boct", "padtone", "bassoct",
-            "glide", "fifth", "swing", "hats", "play", "freeze", "next", "master", "sync", "scale"};
+            "glide", "fifth", "swing", "hats", "play", "freeze", "next", "master", "sync", "scale", "thumplvl", "hatlvl", "openlvl"};
         std::vector<std::string> got;
         for (auto* prm : p.getParameters())
             if (auto* withId = dynamic_cast<juce::AudioProcessorParameterWithID*>(prm))
                 got.push_back(withId->paramID.toStdString());
-        report("the same 33 parameter ids, in order, as the instrument", got == expected, "(" + std::to_string(got.size()) + " found)");
+        report("the same 36 parameter ids, in order, as the instrument", got == expected, "(" + std::to_string(got.size()) + " found)");
         report("the editor can be created", [&] {
             std::unique_ptr<juce::AudioProcessorEditor> ed(p.createEditor());
             return ed != nullptr && ed->getWidth() > 0 && ed->getHeight() > 0;

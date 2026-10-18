@@ -10,6 +10,8 @@
 
 extern "C" {
 #include "amb.h"
+// The plugin's one addition to the engine (engine/amb.c, marked AMB1-PLUGIN): a level for each drum, 1.0 = as before.
+void en_drum_gain(int drum, float gain);
 }
 
 // What the host's parameters say right now. `par` is indexed by the engine's P_* enum (P_MIDI is ignored).
@@ -22,6 +24,7 @@ struct AmbControls
     bool syncToHost = false;   // follow the host's tempo (see AmbCore::setHostTempo) instead of the Tempo parameter
     uint32_t seed = 0;         // the random start, used by prepare() only: 0 = none (the engine's own state); else en_seed(seed)
     uint32_t scale = 0;        // a scale of your own (see Scale.h: relative to the root); 0 = the Mode's scale
+    std::array<int, EN_NDRUM> drum{{100, 100, 100}};   // thump, closed hat, open hat level in percent (100 = as before)
     bool midiOut = false;      // prepare() only: let the engine send its notes to en_midi_out (the MIDI effect build); false = none
     AmbControls();             // engine defaults
 };
@@ -66,6 +69,7 @@ private:
     Resampler resampler_;
     std::array<int, P_NPARAMS> last_{};
     bool lastPlay_ = false, lastFreeze_ = false, lastNext_ = false;
+    std::array<int, EN_NDRUM> lastDrum_{};   // the drum levels last posted (INT_MIN: none yet)
     int lastPool_ = 0;   // the scale last posted to the engine (INT_MIN: none yet)
     std::atomic<bool> regrow_{false};
     float lastGain_ = 1.0f;

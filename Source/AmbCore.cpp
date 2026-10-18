@@ -56,6 +56,7 @@ void AmbCore::prepare(double hostRate, const AmbControls& c)
 
     last_.fill(INT_MIN);
     lastPool_ = INT_MIN;
+    lastDrum_.fill(INT_MIN);
     lastPlay_ = false;
     lastFreeze_ = false;
     lastNext_ = c.nextToggle;   // starting up is not a "next chord"
@@ -117,6 +118,16 @@ void AmbCore::apply(const AmbControls& c)
         {
             lastPool_ = pool;
             en_pool((uint32_t)pool);
+        }
+    }
+    // The drum levels (a direct call, like every engine call here: made from the thread that renders).
+    for (int d = 0; d < EN_NDRUM; ++d)
+    {
+        const int v = std::clamp(c.drum[(size_t)d], 0, 200);
+        if (v != lastDrum_[(size_t)d])
+        {
+            en_drum_gain(d, (float)v * 0.01f);
+            lastDrum_[(size_t)d] = v;
         }
     }
     if (c.play != lastPlay_)

@@ -74,12 +74,12 @@ int main()
         const std::vector<std::string> expected = {
             "pad", "bells", "bass", "pulse", "density", "evolve", "drift", "hits", "echo", "etime", "reverb", "size",
             "bright", "swell", "btone", "motion", "tune", "tempo", "root", "mode", "boct", "padtone", "bassoct",
-            "glide", "fifth", "swing", "hats", "play", "freeze", "next", "master", "sync", "scale"};
+            "glide", "fifth", "swing", "hats", "play", "freeze", "next", "master", "sync", "scale", "thumplvl", "hatlvl", "openlvl"};
         std::vector<std::string> got;
         for (auto* prm : p.getParameters())
             if (auto* withId = dynamic_cast<juce::AudioProcessorParameterWithID*>(prm))
                 got.push_back(withId->paramID.toStdString());
-        report("33 parameters with the expected ids, in order (saved projects depend on them)", got == expected,
+        report("36 parameters with the expected ids, in order (saved projects depend on them)", got == expected,
                "(" + std::to_string(got.size()) + " found)");
         report("eight programs, named after the pieces", p.getNumPrograms() == 8 &&
                p.getProgramName(0) == "Garden" && p.getProgramName(7) == "Tides");

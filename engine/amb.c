@@ -554,6 +554,14 @@ static float pulse_vol, swing, hat_f = 0.9f, hat_open = 0.42f;
 static float step_len, pulse_left;               /* a sixteenth, in samples; to the next MIDI clock pulse */
 static uint32_t noise = 22222u;
 static const uint8_t DRUM_KMAX[EN_NDRUM] = {5, 7, 3};
+/* AMB1-PLUGIN: a level for each of the three drums, on top of Pulse (1.0 = as upstream). Set with en_drum_gain() from
+ * the thread that calls en_render(); declared in the plugin (AmbCore.h), not in amb.h, which stays unmodified. */
+static float drum_gain[EN_NDRUM] = {1.0f, 1.0f, 1.0f};
+void en_drum_gain(int d, float g)
+{
+    if (d >= 0 && d < EN_NDRUM)
+        drum_gain[d] = g;
+}
 static const uint8_t DRUM_GM[EN_NDRUM] = {36, 42, 46};          /* kick, closed hat, open hat */
 /* the hats' metal: four square waves at the 808's inharmonic ratios (Hz / EN_SR) */
 static const float HAT_INC[4] = {304.4f / EN_SR, 369.6f / EN_SR, 522.7f / EN_SR, 800.0f / EN_SR};
@@ -1665,7 +1673,7 @@ static void render_drums(uint32_t n)
     if (v->on) {
         float ph = v->ph, inc = v->inc, amp = v->amp, att = v->att;
         for (j = 0; j < n; j++) {
-            float x = sine(ph) * amp * att * g;
+            float x = sine(ph) * amp * att * g * drum_gain[0];
             mixl[j] += x;
             mixr[j] += x;
             rsend[j] += x * 0.1f;
@@ -1682,8 +1690,8 @@ static void render_drums(uint32_t n)
         v->att = att;
         v->on = amp > 0.0005f;
     }
-    render_hat(&drum[1], n, g * 0.2f, 0.6f, 1.0f);    /* closed: a little right */
-    render_hat(&drum[2], n, g * 0.14f, 1.0f, 0.7f);   /* open: a little left */
+    render_hat(&drum[1], n, g * drum_gain[1] * 0.2f, 0.6f, 1.0f);    /* closed: a little right */
+    render_hat(&drum[2], n, g * drum_gain[2] * 0.14f, 1.0f, 0.7f);   /* open: a little left */
 }
 
 static void render_chunk(int32_t *out, uint32_t n, float gain)

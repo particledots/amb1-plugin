@@ -8,7 +8,7 @@ endif()
 
 # The version is the plugin's version in the host. Raise it with every release: macOS and Logic cache a
 # plugin's name and details and only refresh them when the installed file's version goes up.
-project(AMB1 VERSION 0.9.0 LANGUAGES C CXX)
+project(AMB1 VERSION 0.10.0 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -56,6 +56,10 @@ target_link_libraries(scales_test PRIVATE amb1_core)
 # seed_test: the random start (en_seed) in fresh processes. It runs itself as a child process per case.
 add_executable(seed_test tests/seed_test.cpp)
 target_link_libraries(seed_test PRIVATE amb1_core)
+
+# drum_test: the three drum levels (thump, closed hat, open hat), each case in a fresh child process
+add_executable(drum_test tests/drum_test.cpp)
+target_link_libraries(drum_test PRIVATE amb1_core)
 
 # midifx_test: the engine running with no audio and handing its notes out (the MIDI effect build's engine side)
 add_executable(midifx_test tests/midifx_test.cpp)

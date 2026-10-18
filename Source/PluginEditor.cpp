@@ -144,7 +144,7 @@ AmbEditor::AmbEditor(AmbProcessor& p) : juce::AudioProcessorEditor(p), proc_(p)
     masterAtt_ = std::make_unique<SliderAtt>(proc_.apvts, "master", masterSlider_);
 
     // --- the groups. Every engine parameter the plugin exposes appears exactly once. To regroup, edit here. ---
-    addGroup("Layers", {"pad", "bells", "bass", "pulse"});
+    addGroup("Layers", {"pad", "bells", "bass", "pulse", "thumplvl", "hatlvl", "openlvl"});
     addGroup("Motion", {"density", "evolve", "drift", "hits", "motion"});
     addGroup("Space", {"echo", "etime", "reverb", "size"});
     addGroup("Tone", {"bright", "swell", "btone", "padtone"});
