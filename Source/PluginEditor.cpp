@@ -5,11 +5,33 @@ namespace
 {
 constexpr int kDesignW = 860;   // the size the editor opens at; layout and type scale from it
 constexpr int kDesignH = 780;   // = the old 600 plus the 160 px garden panel and its gap
+
+// The colour of a knob's value arc. The four layers use the colours of their level bars in the display
+// (see padColour() etc. in GardenView.cpp); the three drum levels are shades of the Pulse colour. Every other
+// group has one colour of its own; Bass line and Rhythm borrow the bass and pulse colours they belong to.
+juce::Colour knobColour(const juce::String& group, const juce::String& id)
+{
+    if (id == "pad")      return juce::Colour(0xff93c47d);
+    if (id == "bells")    return juce::Colour(0xff5cc3c8);
+    if (id == "bass")     return juce::Colour(0xffd9aa4f);
+    if (id == "pulse")    return juce::Colour(0xffe6806e);
+    if (id == "thumplvl") return juce::Colour(0xffd9604c);
+    if (id == "hatlvl")   return juce::Colour(0xfff0a191);
+    if (id == "openlvl")  return juce::Colour(0xfff6bdb0);
+    if (group == "Motion")    return juce::Colour(0xffb39ddb);
+    if (group == "Space")     return juce::Colour(0xff7aa2f7);
+    if (group == "Tone")      return juce::Colour(0xffd48bc4);
+    if (group == "Key & tempo") return juce::Colour(0xffa9b7c6);
+    if (group == "Bass line") return juce::Colour(0xffd9aa4f);
+    if (group == "Rhythm")    return juce::Colour(0xffe6806e);
+    return AmbLookAndFeel::accent();
+}
 } // namespace
 
 //==============================================================================
 AmbLookAndFeel::AmbLookAndFeel()
 {
+    setColour(juce::Slider::rotarySliderFillColourId, accent());   // a knob with no colour of its own
     setColour(juce::ResizableWindow::backgroundColourId, background());
     setColour(juce::Label::textColourId, text());
 
@@ -65,7 +87,7 @@ void AmbLookAndFeel::drawRotarySlider(juce::Graphics& g, int x, int y, int width
     {
         juce::Path value;
         value.addCentredArc(centre.x, centre.y, radius, radius, 0.0f, startAngle, angle, true);
-        g.setColour(on ? accent() : dim());
+        g.setColour(on ? slider.findColour(juce::Slider::rotarySliderFillColourId) : dim());
         g.strokePath(value, juce::PathStrokeType(thick, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
     }
 
@@ -218,6 +240,7 @@ void AmbEditor::addGroup(const char* title, std::initializer_list<const char*> i
             c->knob.setRotaryParameters(juce::MathConstants<float>::pi * 1.2f, juce::MathConstants<float>::pi * 2.8f,
                                         true);
             c->knob.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 60, 16);
+            c->knob.setColour(juce::Slider::rotarySliderFillColourId, knobColour(title, id));
             addAndMakeVisible(c->knob);
             c->knobAtt = std::make_unique<SliderAtt>(proc_.apvts, id, c->knob);   // double-click: back to default
         }
