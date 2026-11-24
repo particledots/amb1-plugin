@@ -390,7 +390,9 @@ typedef struct {
     float hf;                                   /* a handoff's fade: 1 normal */
     uint8_t midi_note, hand;                    /* hand: 1 fading out of the old key, 2 into the new */
     uint8_t voices;                             /* this breath's colour: 0 Rhodes, 1 Voices */
+    float pr;                                   /* AMB1-PLUGIN: this breath's Palette modulator ratio (0: none yet = 1) */
 } pad_t;
+static float pal_pad_ratio(void);               /* AMB1-PLUGIN: below */
 static pad_t pad[EN_NPAD];
 static float pad_gate, pad_gain, pad_vol, bright, swell;
 static const float PAD_PAN[EN_NPAD] = {-0.55f, -0.18f, 0.18f, 0.55f};
@@ -429,6 +431,7 @@ static void pad_breathe(pad_t *v, int i)        /* a new breath: its length, its
         midi(0x80, v->midi_note, 0);
     v->note = v->target;
     v->voices = (uint8_t)(par[P_PADTONE] != 0);
+    v->pr = pal_pad_ratio();                    /* AMB1-PLUGIN: latched for the whole breath, so it never sweeps */
     v->midi_note = (uint8_t)v->target;
     if (en_playing)
         midi(0x90, v->midi_note, (uint32_t)(50.0f + 40.0f * v->peak));
@@ -639,6 +642,10 @@ static void pal_step(uint32_t n)                /* once a chunk */
 static float pal_mix(int k, float base)         /* the value in use: upstream's, moved toward the palette's by the amount */
 {
     return base + pal_amt * (pal_cur[k] - base);
+}
+static float pal_pad_ratio(void)
+{
+    return pal_amt > 0.0f ? fm_clampf(pal_mix(PAL_PAD, 1.0f), 0.25f, 6.0f) : 1.0f;
 }
 void en_palette(float amount)
 {
@@ -1581,8 +1588,7 @@ static void render_pad(uint32_t n)
               gl, gr, pn, tgt = 0.0f, idx = 0.0f;
         uint32_t j;
         const int pal = pal_amt > 0.0f;           /* AMB1-PLUGIN: the palette's Rhodes */
-        const float pal_r = pal ? fm_clampf(pal_mix(PAL_PAD, 1.0f), 0.25f, 6.0f) : 1.0f,
-                    pal_b = pal ? fm_clampf(pal_mix(PAL_PAD + 1, 1.0f), 0.3f, 2.0f) : 1.0f,
+        const float pal_b = pal ? fm_clampf(pal_mix(PAL_PAD + 1, 1.0f), 0.3f, 2.0f) : 1.0f,
                     pal_h = pal ? fm_clampf(pal_mix(PAL_PAD + 2, 0.12f), 0.0f, 0.5f) : 0.12f;
         if (amp < 1e-5f && pad_gain < 1e-4f) {
             v->amp = 0.0f;
@@ -1610,7 +1616,7 @@ static void render_pad(uint32_t n)
                 if (p0 >= 1.0f)
                     p0 -= 1.0f;
                 if (pal) {                       /* the modulator on its own phase, at the palette's ratio */
-                    p1 += v->inc[0] * pal_r;
+                    p1 += v->inc[0] * (v->pr > 0.0f ? v->pr : 1.0f);   /* the breath's own ratio */
                     if (p1 >= 1.0f)
                         p1 -= 1.0f;
                 } else {
