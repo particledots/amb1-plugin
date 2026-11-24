@@ -61,6 +61,10 @@ target_link_libraries(seed_test PRIVATE amb1_core)
 add_executable(drum_test tests/drum_test.cpp)
 target_link_libraries(drum_test PRIVATE amb1_core)
 
+# palette_test: the Palette (generative timbre), each case in a fresh child process
+add_executable(palette_test tests/palette_test.cpp)
+target_link_libraries(palette_test PRIVATE amb1_core)
+
 # midifx_test: the engine running with no audio and handing its notes out (the MIDI effect build's engine side)
 add_executable(midifx_test tests/midifx_test.cpp)
 target_link_libraries(midifx_test PRIVATE amb1_core_fx)

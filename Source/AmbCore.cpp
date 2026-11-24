@@ -57,6 +57,7 @@ void AmbCore::prepare(double hostRate, const AmbControls& c)
     last_.fill(INT_MIN);
     lastPool_ = INT_MIN;
     lastDrum_.fill(INT_MIN);
+    lastPalette_ = INT_MIN;
     lastPlay_ = false;
     lastFreeze_ = false;
     lastNext_ = c.nextToggle;   // starting up is not a "next chord"
@@ -128,6 +129,14 @@ void AmbCore::apply(const AmbControls& c)
         {
             en_drum_gain(d, (float)v * 0.01f);
             lastDrum_[(size_t)d] = v;
+        }
+    }
+    {
+        const int p = std::clamp(c.palette, 0, 100);
+        if (p != lastPalette_)
+        {
+            en_palette((float)p * 0.01f);
+            lastPalette_ = p;
         }
     }
     if (c.play != lastPlay_)

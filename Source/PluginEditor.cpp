@@ -169,7 +169,7 @@ AmbEditor::AmbEditor(AmbProcessor& p) : juce::AudioProcessorEditor(p), proc_(p)
     addGroup("Layers", {"pad", "bells", "bass", "pulse", "thumplvl", "hatlvl", "openlvl"});
     addGroup("Motion", {"density", "evolve", "drift", "hits", "motion"});
     addGroup("Space", {"echo", "etime", "reverb", "size"});
-    addGroup("Tone", {"bright", "swell", "btone", "padtone"});
+    addGroup("Tone", {"bright", "swell", "btone", "padtone", "palette"});
     addGroup("Key & tempo", {"root", "mode", "scale", "tempo", "sync", "tune", "boct"});
     addGroup("Bass line", {"bassoct", "glide", "fifth"});
     addGroup("Rhythm", {"swing", "hats"});

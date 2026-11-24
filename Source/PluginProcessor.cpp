@@ -77,6 +77,10 @@ juce::AudioProcessorValueTreeState::ParameterLayout AmbProcessor::createLayout()
         layout.add(std::make_unique<juce::AudioParameterInt>(
             juce::ParameterID{drumIds[d], 1}, drumNames[d], 0, drumMax[d], 100,
             juce::AudioParameterIntAttributes().withLabel("%")));
+    // Added in v0.13, appended again: the Palette. 0 = the stock sound (the default, exactly as before); above 0 each piece rolls
+    // its own bell, pad timbres, and they keep drifting.
+    layout.add(std::make_unique<juce::AudioParameterInt>(juce::ParameterID{"palette", 1}, "Palette", 0, 100, 0,
+                                                         juce::AudioParameterIntAttributes().withLabel("%")));
     return layout;
 }
 
@@ -99,6 +103,7 @@ AmbProcessor::AmbProcessor()
     rawDrum_[0] = apvts.getRawParameterValue("thumplvl");
     rawDrum_[1] = apvts.getRawParameterValue("hatlvl");
     rawDrum_[2] = apvts.getRawParameterValue("openlvl");
+    rawPalette_ = apvts.getRawParameterValue("palette");
     apvts.addParameterListener("mode", this);
     apvts.addParameterListener("scale", this);
 }
@@ -227,6 +232,7 @@ void AmbProcessor::readControls(AmbControls& c) const
     c.syncToHost = rawSync_->load() > 0.5f;
     for (int d = 0; d < EN_NDRUM; ++d)
         c.drum[(size_t)d] = juce::roundToInt(rawDrum_[d]->load());
+    c.palette = juce::roundToInt(rawPalette_->load());
     const uint32_t own = customScale();
     c.scale = own != 0u ? own : amb1scale::libraryPool(libraryScale());   // yours, else the menu's, else (0) the Mode's
 }
@@ -407,7 +413,11 @@ void AmbProcessor::setStateInformation(const void* data, int sizeInBytes)
             const bool savedDrum[EN_NDRUM] = {tree.getChildWithProperty("id", "thumplvl").isValid(),
                                               tree.getChildWithProperty("id", "hatlvl").isValid(),
                                               tree.getChildWithProperty("id", "openlvl").isValid()};
+            const bool savedPalette = tree.getChildWithProperty("id", "palette").isValid();
             apvts.replaceState(tree);
+            if (!savedPalette)   // a project saved before the Palette (v0.13) comes back as it sounded: 0
+                if (auto* prm = apvts.getParameter("palette"))
+                    prm->setValueNotifyingHost(prm->getDefaultValue());
             if (!savedSync)
                 if (auto* prm = apvts.getParameter("sync"))
                     prm->setValueNotifyingHost(prm->getDefaultValue());
