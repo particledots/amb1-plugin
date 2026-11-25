@@ -74,12 +74,12 @@ int main()
         const std::vector<std::string> expected = {
             "pad", "bells", "bass", "pulse", "density", "evolve", "drift", "hits", "echo", "etime", "reverb", "size",
             "bright", "swell", "btone", "motion", "tune", "tempo", "root", "mode", "boct", "padtone", "bassoct",
-            "glide", "fifth", "swing", "hats", "play", "freeze", "next", "master", "sync", "scale", "thumplvl", "hatlvl", "openlvl", "palette"};
+            "glide", "fifth", "swing", "hats", "play", "freeze", "next", "master", "sync", "scale", "thumplvl", "hatlvl", "openlvl", "palette", "pulsevoice", "pulsechance"};
         std::vector<std::string> got;
         for (auto* prm : p.getParameters())
             if (auto* withId = dynamic_cast<juce::AudioProcessorParameterWithID*>(prm))
                 got.push_back(withId->paramID.toStdString());
-        report("37 parameters with the expected ids, in order (saved projects depend on them)", got == expected,
+        report("39 parameters with the expected ids, in order (saved projects depend on them)", got == expected,
                "(" + std::to_string(got.size()) + " found)");
         report("eight programs, named after the pieces", p.getNumPrograms() == 8 &&
                p.getProgramName(0) == "Garden" && p.getProgramName(7) == "Tides");
@@ -298,6 +298,45 @@ int main()
         report("a project saved before the drum levels existed loads them at 100 %", back);
     }
 
+
+    printf("pulse sound (v0.14)\n");
+    {
+        AmbProcessor d;
+        report("Pulse sound starts on Drums and Pulse chance at 100 %", juce::roundToInt(getValue(d, "pulsevoice")) == 0 &&
+               juce::roundToInt(getValue(d, "pulsechance")) == 100);
+        AmbProcessor e;
+        setValue(e, "pulsevoice", 1.0f);
+        setValue(e, "pulsechance", 35.0f);
+        juce::MemoryBlock saved;
+        e.getStateInformation(saved);
+        AmbProcessor f;
+        f.setStateInformation(saved.getData(), (int)saved.getSize());
+        report("a saved Melodic and chance of 35 % come back", juce::roundToInt(getValue(f, "pulsevoice")) == 1 &&
+               juce::roundToInt(getValue(f, "pulsechance")) == 35);
+        auto x = juce::AudioProcessor::getXmlFromBinary(saved.getData(), (int)saved.getSize());
+        int taken = 0;
+        if (x != nullptr)
+            for (const char* id : {"pulsevoice", "pulsechance"})
+                if (auto* child = x->getChildByAttribute("id", id))
+                {
+                    x->removeChildElement(child, true);
+                    ++taken;
+                }
+        juce::MemoryBlock old;
+        if (x != nullptr)
+            juce::AudioProcessor::copyXmlToBinary(*x, old);
+        AmbProcessor g;
+        setValue(g, "pulsevoice", 1.0f);   // Melodic now
+        setValue(g, "pulsechance", 10.0f);
+        g.setStateInformation(old.getData(), (int)old.getSize());
+        report("a project saved before the Pulse sound existed loads on Drums, 100 %", taken == 2 && juce::roundToInt(getValue(g, "pulsevoice")) == 0 &&
+               juce::roundToInt(getValue(g, "pulsechance")) == 100);
+        AmbProcessor p;
+        setValue(p, "pulsevoice", 1.0f);
+        start(p, 48000.0, 512);
+        const Stats s = run(p, 30.0, 48000.0, 512);
+        report("Melodic for 30 s at 48 kHz: finite, audible, no clipping", s.nan == 0 && s.rms > 0.005 && s.peak < 0.95, fmt(s));
+    }
 
     printf("a scale of your own\n");
     {

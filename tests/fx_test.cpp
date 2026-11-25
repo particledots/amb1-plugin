@@ -79,12 +79,12 @@ int main()
         const std::vector<std::string> expected = {
             "pad", "bells", "bass", "pulse", "density", "evolve", "drift", "hits", "echo", "etime", "reverb", "size",
             "bright", "swell", "btone", "motion", "tune", "tempo", "root", "mode", "boct", "padtone", "bassoct",
-            "glide", "fifth", "swing", "hats", "play", "freeze", "next", "master", "sync", "scale", "thumplvl", "hatlvl", "openlvl", "palette"};
+            "glide", "fifth", "swing", "hats", "play", "freeze", "next", "master", "sync", "scale", "thumplvl", "hatlvl", "openlvl", "palette", "pulsevoice", "pulsechance"};
         std::vector<std::string> got;
         for (auto* prm : p.getParameters())
             if (auto* withId = dynamic_cast<juce::AudioProcessorParameterWithID*>(prm))
                 got.push_back(withId->paramID.toStdString());
-        report("the same 37 parameter ids, in order, as the instrument", got == expected, "(" + std::to_string(got.size()) + " found)");
+        report("the same 39 parameter ids, in order, as the instrument", got == expected, "(" + std::to_string(got.size()) + " found)");
         report("the editor can be created", [&] {
             std::unique_ptr<juce::AudioProcessorEditor> ed(p.createEditor());
             return ed != nullptr && ed->getWidth() > 0 && ed->getHeight() > 0;
@@ -102,6 +102,14 @@ int main()
         snprintf(what, sizeof what, "60 s at %.1f kHz: pad, bells and bass play; time order kept", sr / 1000.0);
         snprintf(detail, sizeof detail, "(pad %ld, bells %ld, bass %ld, drums %ld note-ons)", o.noteOns[0], o.noteOns[1], o.noteOns[2], o.noteOns[9]);
         report(what, o.noteOns[0] > 0 && o.noteOns[1] > 0 && o.noteOns[2] > 0 && o.orderOk, detail);
+    }
+    {
+        AmbProcessor p;   // v0.14: Melodic plays plucked notes on channel 4 and no drum notes on channel 10
+        p.apvts.getParameter("pulsevoice")->setValueNotifyingHost(1.0f);
+        start(p, 48000.0, 512);
+        const Out o = run(p, 60.0, 48000.0, 512);
+        report("Melodic: the pulse leaves as notes on channel 4, none on channel 10", o.noteOns[3] > 0 && o.noteOns[9] == 0 && o.noteOns[0] > 0 && o.orderOk,
+               "(" + std::to_string(o.noteOns[3]) + " pluck notes)");
     }
     {
         AmbProcessor p;

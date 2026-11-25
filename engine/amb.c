@@ -571,6 +571,23 @@ void en_drum_gain(int d, float g)
     if (d >= 0 && d < EN_NDRUM)
         drum_gain[d] = g;
 }
+/* AMB1-PLUGIN: the melodic pulse (the block above render_hat): 0 = the drums, exactly as upstream; 1 = each pulse hit plays a
+ * short plucked note from the chord that is sounding. Set with en_pulse_voice() from the thread that calls en_render();
+ * declared in the plugin (AmbCore.h), not in amb.h. */
+#define PL_N 12                                 /* plucked voices */
+#define PL_NP 4                                 /* sine partials in one pluck */
+typedef struct {
+    float ph[PL_NP], inc[PL_NP], a[PL_NP], pd[PL_NP];   /* partial phases (turns), increments, levels, decay per sample */
+    float amp, adec, att, gl, gr;
+    uint8_t on, note, drum;
+} pluck_t;
+static pluck_t pluck[PL_N];
+static uint8_t pulse_melodic, pl_pos[EN_NDRUM];  /* pl_pos: where each pattern is in the chord */
+static int pulse_chance = 100;                   /* Melodic only: the percent of hits that play (100 = all) */
+static uint32_t pl_rng = 0x2545F491u;            /* its own random generator: the engine's is never drawn from */
+static void pluck_fire(int d, float vel);
+void en_pulse_voice(int v) { pulse_melodic = (uint8_t)(v != 0); }
+void en_pulse_chance(int pct) { pulse_chance = pct < 0 ? 0 : pct > 100 ? 100 : pct; }
 
 /* AMB1-PLUGIN: the PALETTE, a generative sound source. At 0 nothing here runs and the output is bit-identical to upstream.
  * Above 0, each new piece (regrow) rolls a timbral family for the garden, and every bell loop and the Rhodes pad
@@ -1100,6 +1117,10 @@ static void drums_evolve(void)                  /* a bar: a pattern turns, or ga
 static void drum_fire(int d, float vel)
 {
     drum_t *v = &drum[d];
+    if (pulse_melodic) {                        /* AMB1-PLUGIN: a plucked note instead of the drum (same hit, same moment) */
+        pluck_fire(d, vel);
+        return;
+    }
     v->on = 1;
     v->amp = vel;
     v->att = 0.0f;
@@ -1556,6 +1577,8 @@ static void quiet(void)
         bell[i].on = 0;
     for (i = 0; i < EN_NDRUM; i++)
         drum[i].on = 0, drum[i].wait = 0;
+    for (i = 0; i < PL_N; i++)                   /* AMB1-PLUGIN */
+        pluck[i].on = 0;
     for (i = 0; i < EN_NPAD; i++)
         pad[i].amp = 0.0f;
     bass.amp = 0.0f;
@@ -1952,6 +1975,125 @@ static void render_bells(uint32_t n)
     }
 }
 
+/* ===== AMB1-PLUGIN: the melodic pulse ======================================================================
+ * With en_pulse_voice(1) every pulse hit (the same Euclidean patterns, swing, rests, Hits, Pulse and drum levels) plays a
+ * short plucked note instead of a drum: the thump's pattern plays low notes (C3..B3), the closed hat's middle ones
+ * (C4..B4), the open hat's high ones (C5..B5). Each note is a tone of the chord that is sounding, so it is also a note of
+ * the scale. The pluck is four decaying sine partials of a slightly stiff string. At each strike the shared SCENE is read
+ * (brightness: how bright the partials are and how long the highs last; character: how bell-like the partials are;
+ * room: how long it rings), so the pluck drifts with the Palette like the bells, the pads and the bass. At Palette 0 the
+ * scene is 0 and the pluck is one fixed sound. The notes come from the pulse's own random generator, so the rest of the
+ * music is the same in both modes. Pulse chance (en_pulse_chance) leaves out a share of the hits. In the MIDI build the notes go out on channel 4. */
+#define PL_GAIN 0.6f                             /* level trim: the pluck against the drums (checked on renders) */
+static float pl_frand(void)
+{
+    pl_rng ^= pl_rng << 13;
+    pl_rng ^= pl_rng >> 17;
+    pl_rng ^= pl_rng << 5;
+    return (float)(pl_rng >> 8) * (1.0f / 16777216.0f);
+}
+static void pluck_fire(int d, float vel)
+{
+    static const uint8_t BASE[EN_NDRUM] = {48, 60, 72};
+    static const float PAN[EN_NDRUM] = {0.0f, 0.3f, -0.35f}, RING[EN_NDRUM] = {1.3f, 1.0f, 0.8f};
+    const float B = sc_val(SC_B), I = sc_val(SC_I), R = sc_val(SC_R);
+    const float ci = fm_clampf(0.5f + 0.5f * I, 0.0f, 1.0f);
+    const float stiff = 0.0005f + 0.012f * ci * ci;                              /* inharmonicity of the partials */
+    const float tilt = fm_clampf(1.9f - 0.9f * B - 0.6f * (vel - 0.6f), 0.5f, 3.2f);   /* level falls as ratio^-tilt */
+    const float T0 = fm_clampf(0.5f * RING[d] * fm_expf(0.55f * R), 0.15f, 2.0f);       /* the fundamental's 60 dB ring */
+    const float loss = 0.5f - 0.15f * B;                                         /* how much faster the highs die */
+    float f0, p, e0 = 0.0f, amin = 1e9f, lo = 9.0f, al[PL_NP], a[PL_NP], r[PL_NP];
+    int i, k, best = 0, n;
+    pluck_t *v;
+    if (chord_nt < 1)
+        return;
+    if (pulse_chance < 100 && pl_frand() * 100.0f >= (float)pulse_chance)
+        return;                                  /* this hit is left out (no random draw at 100: the notes are as without the knob) */
+    k = pl_pos[d] % chord_nt;                    /* a tone of the chord: on up or down it, now and then skipping or staying */
+    p = pl_frand();
+    k += p < 0.45f ? 1 : p < 0.7f ? chord_nt - 1 : p < 0.88f ? 2 : 0;
+    k %= chord_nt;
+    pl_pos[d] = (uint8_t)k;
+    n = BASE[d] + ((chord_pcs[k] - BASE[d]) % 12 + 12) % 12;
+    for (i = 0; i < PL_N; i++) {                 /* a free voice, or the quietest */
+        float q = pluck[i].on ? pluck[i].amp : -1.0f;
+        if (q < lo) {
+            lo = q;
+            best = i;
+        }
+    }
+    v = &pluck[best];
+    if (v->on)
+        midi(0x83, v->note, 0);
+    f0 = mtof((float)n);
+    for (i = 0; i < PL_NP; i++) {
+        const float m = (float)(i + 1);
+        r[i] = m * fm_sqrtf(1.0f + stiff * m * m);
+        a[i] = f0 * r[i] < 0.42f * EN_SR ? fm_powf(r[i], -tilt) : 0.0f;       /* nothing past the Nyquist */
+        al[i] = (6.9f / T0) * (1.0f + loss * (fm_powf(r[i], 1.6f) - 1.0f));
+        if (a[i] > 0.0f && al[i] < amin)
+            amin = al[i];
+        e0 += a[i] * a[i];
+    }
+    if (e0 <= 0.0f)
+        return;
+    e0 = PL_GAIN * fm_rsqrtf(e0);
+    for (i = 0; i < PL_NP; i++) {
+        v->a[i] = a[i] * e0;
+        v->pd[i] = fm_expf(-fm_minf((al[i] - amin) * (1.0f / EN_SR), 0.02f));
+        v->inc[i] = f0 * r[i] * (1.0f / EN_SR);
+        v->ph[i] = pl_frand();
+    }
+    v->adec = fm_expf(-amin * (1.0f / EN_SR));
+    v->amp = vel;
+    v->att = 0.0f;
+    p = (PAN[d] + 1.0f) * (FM_PI / 4.0f);
+    v->gl = fm_cosf(p);
+    v->gr = fm_sinf(p);
+    v->on = 1;
+    v->note = (uint8_t)n;
+    v->drum = (uint8_t)d;
+    en_drum_glow[d] = 1.0f;
+    midi(0x93, (uint32_t)n, (uint32_t)fm_minf(vel * 100.0f, 127.0f));
+}
+
+static void render_pluck(uint32_t n)
+{
+    int i, k;
+    for (i = 0; i < PL_N; i++) {
+        pluck_t *v = &pluck[i];
+        const float g = pulse_vol * 1.1f * fm_minf(drum_gain[v->drum], 1.5f);   /* a drum's level, here its register's, up to 150 % */
+        float amp = v->amp, att = v->att;
+        uint32_t j;
+        if (!v->on)
+            continue;
+        for (j = 0; j < n; j++) {
+            float x = 0.0f;
+            for (k = 0; k < PL_NP; k++) {
+                x += sine(v->ph[k]) * v->a[k];
+                v->ph[k] += v->inc[k];
+                if (v->ph[k] >= 1.0f)
+                    v->ph[k] -= 1.0f;
+                v->a[k] *= v->pd[k];
+            }
+            x *= amp * att * g;
+            mixl[j] += x * v->gl;
+            mixr[j] += x * v->gr;
+            rsend[j] += x * 0.3f;
+            esend[j] += x * 0.15f;
+            amp *= v->adec;
+            att += (1.0f - att) * 0.05f;
+        }
+        v->amp = amp;
+        v->att = att;
+        if (amp < 0.0008f) {
+            v->on = 0;
+            midi(0x83, v->note, 0);
+        }
+    }
+}
+/* ===== end of the melodic pulse ======================================================================== */
+
 /* a hat: the metal and noise, high-passed (Chamberlin SVF, ~4 to 10 kHz by Hats); no pitch, little echo */
 static void render_hat(drum_t *v, uint32_t n, float g, float pl, float pr)
 {
@@ -2029,6 +2171,7 @@ static void render_chunk(int32_t *out, uint32_t n, float gain)
     render_bass(n);
     render_bells(n);
     render_drums(n);
+    render_pluck(n);                             /* AMB1-PLUGIN: silent unless en_pulse_voice(1) */
     for (j = 0; j < n; j++) {
         float wl, wr, l, r, el, er, xl, xr;
         echoes(esend[j] * eg, &el, &er, &xl, &xr);

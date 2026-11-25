@@ -97,6 +97,8 @@ private:
     std::atomic<float>* rawScale_ = nullptr;
     std::atomic<float>* rawDrum_[EN_NDRUM] = {nullptr, nullptr, nullptr};
     std::atomic<float>* rawPalette_ = nullptr;
+    std::atomic<float>* rawPulseVoice_ = nullptr;
+    std::atomic<float>* rawPulseChance_ = nullptr;
     std::atomic<int> currentProgram_{0};
     std::atomic<uint32_t> customPacked_{0};   // Mode in the high 16 bits, the scale mask in the low 16 (0 = none)
     std::atomic<int> libraryMode_{0};         // the Mode that was set when the Scale menu's choice was made

@@ -81,6 +81,12 @@ juce::AudioProcessorValueTreeState::ParameterLayout AmbProcessor::createLayout()
     // its own bell, pad timbres, and they keep drifting.
     layout.add(std::make_unique<juce::AudioParameterInt>(juce::ParameterID{"palette", 1}, "Palette", 0, 100, 0,
                                                          juce::AudioParameterIntAttributes().withLabel("%")));
+    // Added in v0.14, appended again: what the pulse plays. Drums (the default, exactly as before) or Melodic: each pulse hit plays a short
+    // plucked note from the chord. And, for Melodic only, the chance that a hit plays (100 % = every hit, the default).
+    layout.add(std::make_unique<juce::AudioParameterChoice>(juce::ParameterID{"pulsevoice", 1}, "Pulse sound",
+                                                            juce::StringArray{"Drums", "Melodic"}, 0));
+    layout.add(std::make_unique<juce::AudioParameterInt>(juce::ParameterID{"pulsechance", 1}, "Pulse chance", 0, 100, 100,
+                                                         juce::AudioParameterIntAttributes().withLabel("%")));
     return layout;
 }
 
@@ -104,6 +110,8 @@ AmbProcessor::AmbProcessor()
     rawDrum_[1] = apvts.getRawParameterValue("hatlvl");
     rawDrum_[2] = apvts.getRawParameterValue("openlvl");
     rawPalette_ = apvts.getRawParameterValue("palette");
+    rawPulseVoice_ = apvts.getRawParameterValue("pulsevoice");
+    rawPulseChance_ = apvts.getRawParameterValue("pulsechance");
     apvts.addParameterListener("mode", this);
     apvts.addParameterListener("scale", this);
 }
@@ -233,6 +241,8 @@ void AmbProcessor::readControls(AmbControls& c) const
     for (int d = 0; d < EN_NDRUM; ++d)
         c.drum[(size_t)d] = juce::roundToInt(rawDrum_[d]->load());
     c.palette = juce::roundToInt(rawPalette_->load());
+    c.pulseVoice = juce::roundToInt(rawPulseVoice_->load());
+    c.pulseChance = juce::roundToInt(rawPulseChance_->load());
     const uint32_t own = customScale();
     c.scale = own != 0u ? own : amb1scale::libraryPool(libraryScale());   // yours, else the menu's, else (0) the Mode's
 }
@@ -414,7 +424,15 @@ void AmbProcessor::setStateInformation(const void* data, int sizeInBytes)
                                               tree.getChildWithProperty("id", "hatlvl").isValid(),
                                               tree.getChildWithProperty("id", "openlvl").isValid()};
             const bool savedPalette = tree.getChildWithProperty("id", "palette").isValid();
+            const bool savedPulseVoice = tree.getChildWithProperty("id", "pulsevoice").isValid();
+            const bool savedPulseChance = tree.getChildWithProperty("id", "pulsechance").isValid();
             apvts.replaceState(tree);
+            if (!savedPulseVoice)   // a project saved before the Pulse sound (v0.14) comes back as it sounded: Drums, every hit
+                if (auto* prm = apvts.getParameter("pulsevoice"))
+                    prm->setValueNotifyingHost(prm->getDefaultValue());
+            if (!savedPulseChance)
+                if (auto* prm = apvts.getParameter("pulsechance"))
+                    prm->setValueNotifyingHost(prm->getDefaultValue());
             if (!savedPalette)   // a project saved before the Palette (v0.13) comes back as it sounded: 0
                 if (auto* prm = apvts.getParameter("palette"))
                     prm->setValueNotifyingHost(prm->getDefaultValue());

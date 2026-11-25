@@ -172,7 +172,7 @@ AmbEditor::AmbEditor(AmbProcessor& p) : juce::AudioProcessorEditor(p), proc_(p)
     addGroup("Tone", {"bright", "swell", "btone", "padtone", "palette"});
     addGroup("Key & tempo", {"root", "mode", "scale", "tempo", "sync", "tune", "boct"});
     addGroup("Bass line", {"bassoct", "glide", "fifth"});
-    addGroup("Rhythm", {"swing", "hats"});
+    addGroup("Rhythm", {"swing", "hats", "pulsevoice", "pulsechance"});
 
     setResizeLimits(600, 500, 1600, 1250);
     setResizable(true, true);
@@ -218,6 +218,10 @@ void AmbEditor::addGroup(const char* title, std::initializer_list<const char*> i
                 c->menu.setItemEnabled(choices.size(), false);
                 c->menu.setTooltip("Play this scale instead of the Mode's. Choosing another Mode or piece resets it.");
             }
+            if (juce::String(id) == "pulsevoice")
+                c->menu.setTooltip("What the pulse plays. Drums: as always. Melodic: each hit, on the same rhythms, plays a short "
+                                   "plucked note from the chord (low, middle and high for the three rhythms). The Thump, Closed hat and "
+                                   "Open hat levels then set those three registers (up to 150 %).");
             int longest = 0;
             for (const auto& choice : choices)
                 longest = juce::jmax(longest, choice.length());

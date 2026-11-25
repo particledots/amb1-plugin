@@ -14,6 +14,10 @@ extern "C" {
 void en_drum_gain(int drum, float gain);
 // v0.13, engine/amb.c (AMB1-PLUGIN): the Palette, a generative sound source. 0 = the stock sound (bit-identical), 1 = fully rolled.
 void en_palette(float amount);
+// v0.14, engine/amb.c (AMB1-PLUGIN): the melodic pulse. 0 = the drums (the default, bit-identical), 1 = each pulse hit plays a plucked chord tone.
+void en_pulse_voice(int voice);
+// v0.14: Melodic only: the percent of pulse hits that play (100 = all, the default).
+void en_pulse_chance(int percent);
 }
 
 // What the host's parameters say right now. `par` is indexed by the engine's P_* enum (P_MIDI is ignored).
@@ -28,6 +32,8 @@ struct AmbControls
     uint32_t scale = 0;        // a scale of your own (see Scale.h: relative to the root); 0 = the Mode's scale
     std::array<int, EN_NDRUM> drum{{100, 100, 100}};   // thump, closed hat, open hat level in percent (100 = as before)
     int palette = 0;           // the Palette in percent: 0 = the stock sound; above 0, each piece rolls its own timbres (see amb.c)
+    int pulseChance = 100;     // Melodic only: the percent of pulse hits that play (100 = every hit)
+    int pulseVoice = 0;        // 0 = the pulse plays drums (as before); 1 = it plays plucked notes from the chord (see amb.c)
     bool midiOut = false;      // prepare() only: let the engine send its notes to en_midi_out (the MIDI effect build); false = none
     AmbControls();             // engine defaults
 };
@@ -73,6 +79,8 @@ private:
     std::array<int, P_NPARAMS> last_{};
     bool lastPlay_ = false, lastFreeze_ = false, lastNext_ = false;
     int lastPalette_ = 0;                    // the Palette last posted (INT_MIN: none yet)
+    int lastPulseChance_ = 100;              // the pulse chance last posted (INT_MIN: none yet)
+    int lastPulseVoice_ = 0;                 // the pulse voice last posted (INT_MIN: none yet)
     std::array<int, EN_NDRUM> lastDrum_{};   // the drum levels last posted (INT_MIN: none yet)
     int lastPool_ = 0;   // the scale last posted to the engine (INT_MIN: none yet)
     std::atomic<bool> regrow_{false};

@@ -8,7 +8,7 @@ endif()
 
 # The version is the plugin's version in the host. Raise it with every release: macOS and Logic cache a
 # plugin's name and details and only refresh them when the installed file's version goes up.
-project(AMB1 VERSION 0.13.0 LANGUAGES C CXX)
+project(AMB1 VERSION 0.14.0 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -64,6 +64,10 @@ target_link_libraries(drum_test PRIVATE amb1_core)
 # palette_test: the Palette (generative timbre), each case in a fresh child process
 add_executable(palette_test tests/palette_test.cpp)
 target_link_libraries(palette_test PRIVATE amb1_core)
+
+# pulse_test: the Pulse sound switch (Drums / Melodic), each case in a fresh child process
+add_executable(pulse_test tests/pulse_test.cpp)
+target_link_libraries(pulse_test PRIVATE amb1_core)
 
 # midifx_test: the engine running with no audio and handing its notes out (the MIDI effect build's engine side)
 add_executable(midifx_test tests/midifx_test.cpp)
