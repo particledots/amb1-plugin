@@ -10,29 +10,27 @@ a plate reverb. It plays itself; you tend it.
 - Upstream: https://github.com/charlesvestal/fm1-amb (GPL-3.0-only)
 - This is not affiliated with or endorsed by Charles Vestal, M-VAVE, Hügelton Instruments or Brian Eno.
 
-## Status: v0.1, first scaffold
+## Status: v0.14.0
 
-What works (headless-tested, and tried in Logic Pro on an Intel Mac; not yet tried on Apple silicon):
+Two plugins, both running the same engine in Logic Pro on Apple silicon and Intel Macs (tried in Logic by the author on both):
 
-- AU instrument and VST3, universal (arm64 + x86_64), minimum macOS 11.
-- All 27 engine parameters, plus Play, Freeze, Next chord, Master and Tempo sync, as host parameters.
-- The eight pieces as programs (factory presets): Garden, Departures, Voices, Afternoon, Night Bus,
-  Shoreline, Glass, Tides.
+- **AMB-1**: AU instrument (and VST3), universal (arm64 + x86_64), minimum macOS 11.
+- **AMB-1 MIDI**: a MIDI effect that sends the garden's notes to an instrument of your choice (pad ch 1, bells ch 2, bass ch 3, melodic pulse ch 4, drums ch 10).
+
+What is in it (see `CHANGELOG.md` for the history):
+
+- All engine parameters plus Play, Freeze, Next chord, Master and Tempo sync as host parameters; the eight pieces as programs.
 - Any host sample rate: the engine runs at 44.1 kHz and is resampled.
-- A grouped, resizable editor: a live picture of the garden across the top (the scale and chord, the four bell loops,
-  the level of each layer, the three pulse patterns, the way to the next chord), then knobs, a piece menu,
-  Play / Freeze / Next chord, Master, and tooltips.
-- Optional tempo sync (off by default): the garden follows the host's tempo instead of its own Tempo parameter.
+- A grouped, resizable editor with a live picture of the garden, coloured knobs and tooltips.
+- Scale control: Mode and Root, a Scale menu (20 more scales), or click the ring to edit your own.
+- A level for each drum (hats up to 400 %), a **Palette** knob (struck-object bells and a slow whole-sound morph), and a **Pulse sound** switch (Drums or Melodic plucks) with a **Pulse chance** knob.
+- Random start: each start begins a different garden.
 
-Known limits of this version:
+Known limits:
 
-- **One AMB-1 at a time.** The engine keeps its state in file-level statics, so a second instance is silent
-  (the editor says so).
-- **Free-running.** The garden keeps playing whether or not the host is running, and does not follow its transport
-  or bar position. With Tempo sync on it takes the host's tempo only (the engine's own tempo range is 30 to 120 bpm,
-  which the echo times and swing use even if the host is faster or slower).
-- **Not repeatable between runs.** The engine's random generator is not reset when the plugin starts.
-- No MIDI in or out yet; the scale is set by Mode and Root.
+- **One AMB-1 at a time.** The engine keeps its state in file-level statics, so a second instance is silent (the editor says so).
+- **Free-running.** The garden keeps playing whether or not the host is running. With Tempo sync on it takes the host's tempo only (the engine's own tempo range is 30 to 120 bpm).
+- The AMB-1 instrument takes no MIDI notes in; in AMB-1 MIDI the level knobs do nothing (everything goes to the instrument after it).
 - Not code-signed or notarized (ad-hoc signed only).
 
 ## Building
@@ -51,7 +49,7 @@ The full plugin needs JUCE 8 (fetched by CMake) and builds on macOS.
 
 | Path | What |
 | --- | --- |
-| `engine/` | AMB-1's engine, copied unmodified from upstream (`engine/UPSTREAM.md` has the commit and hashes) |
+| `engine/` | AMB-1's engine, from upstream; `amb.h` and `fastmath.h` unmodified, `amb.c` has four small marked local changes (`engine/UPSTREAM.md` has the commit, the changes and hashes) |
 | `Source/AmbCore.*`, `Source/Resampler.h` | engine glue and the 44.1 kHz resampler (no JUCE) |
 | `Source/Plugin*.{h,cpp}` | the JUCE plugin |
 | `tests/` | `render_test` (engine), `rate_test` (resampler and sample rates), `plugin_test` (the plugin object) |
