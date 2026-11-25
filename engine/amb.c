@@ -393,6 +393,8 @@ typedef struct {
     float pr;                                   /* AMB1-PLUGIN: this breath's Palette modulator ratio (0: none yet = 1) */
 } pad_t;
 static float pal_pad_ratio(void);               /* AMB1-PLUGIN: below */
+enum { SC_B, SC_I, SC_R, SC_N };                /* AMB1-PLUGIN: scene numbers */
+static float sc_val(int k);                     /* AMB1-PLUGIN: the shared scene, below (already scaled by the Palette amount) */
 static pad_t pad[EN_NPAD];
 static float pad_gate, pad_gain, pad_vol, bright, swell;
 static const float PAD_PAN[EN_NPAD] = {-0.55f, -0.18f, 0.18f, 0.55f};
@@ -500,7 +502,7 @@ static void pad_coefs(pad_t *v, int i)          /* every 32 samples: the breath,
     f = mtof(v->note + 0.08f * motion * mod[i].v);                          /* a slow drift, as tape */
     v->inc[0] = f * 0.99856f * (1.0f / EN_SR);  /* -2.5 and +2.5 cents */
     v->inc[1] = f * 1.00144f * (1.0f / EN_SR);
-    vw = fm_clampf((float)bright * 0.01f + 0.25f * arcm + 0.2f * motion * mod[(i + 2) % NMOD_PAD].v, 0.0f, 1.0f) * 2.999f;
+    vw = fm_clampf((float)bright * 0.01f + 0.25f * arcm + 0.2f * motion * mod[(i + 2) % NMOD_PAD].v + 0.5f * sc_val(SC_B), 0.0f, 1.0f) * 2.999f;
     a = (int)vw;
     vw -= (float)a;
     f1 = VOWEL[a][0] + (VOWEL[a + 1][0] - VOWEL[a][0]) * vw;
@@ -536,6 +538,9 @@ typedef struct {
     float amul;                                 /* AMB1-PLUGIN: this bell's attack-rate multiplier (1.0 = as upstream) */
     int32_t wait;
     uint8_t on, note, loop;
+    /* AMB1-PLUGIN (object bells): a struck object as OB_NP decaying sine partials, two of them with a twin (mode splitting) */
+    uint8_t obj;
+    float pph[8], pinc[8], pa[8], pd[8];        /* partial phases (turns), increments, relative levels, relative decays per sample */
 } bell_t;
 static bell_t bell[NBELL];
 static float bell_vol, btone;
@@ -573,6 +578,9 @@ void en_drum_gain(int d, float g)
  * their brightness, ring and strike, the pad's modulator ratio, brightness and second harmonic. The values are
  * read when a bell starts and slewed slowly for the pad, so nothing clicks. Its random generator is its own,
  * seeded (read-only) from the engine's, so the same seed plays the same notes with or without a palette.
+ * Palette 2 (below, after pal_range): above 0 the bells are struck objects (partials from material, size, stiffness
+ * and damping), and one slow SCENE (brightness, character, room) moves the bells, both pads and the bass together.
+ * The drums, the reverb and the echo are never touched.
  * Set with en_palette() (0..1) from the thread that calls en_render(); declared in the plugin (AmbCore.h). */
 enum { PAL_RATIO, PAL_IDX, PAL_DEC, PAL_ATT, PAL_PER = 4, PAL_PAD = EN_NLOOP * PAL_PER, PAL_N = PAL_PAD + 3 };
 static float pal_amt;                           /* 0..1: how far from the stock sound */
@@ -593,6 +601,160 @@ static float pal_frand(void)
     return (float)(pal_rng >> 8) * (1.0f / 16777216.0f);
 }
 static float pal_range(float lo, float hi) { return lo + (hi - lo) * pal_frand(); }
+
+
+/* ===== AMB1-PLUGIN: the SCENE, one slow wandering state that every voice follows =============================
+ * Three numbers in -1..1, each walking to a new target every 25..60 s (time constant ~20 s). Brightness (B): how hard
+ * and bright everything is; Character (I): how bell-like/inharmonic against pure; Room (R): how long and large against
+ * short and close. The bells' objects, both pads and the bass read them, each in its own way, so the whole sound moves
+ * together. Own random generator; nothing else is disturbed. */
+static uint32_t sc_rng = 1u;
+static float sc_cur[SC_N], sc_tgt[SC_N];
+static uint32_t sc_left[SC_N];
+static float sc_frand(void)
+{
+    sc_rng ^= sc_rng << 13;
+    sc_rng ^= sc_rng >> 17;
+    sc_rng ^= sc_rng << 5;
+    return (float)(sc_rng >> 8) * (1.0f / 16777216.0f);
+}
+static void sc_pick(int k)
+{
+    float r = sc_frand() * 2.0f - 1.0f;
+    sc_tgt[k] = r * (0.55f + 0.45f * sc_frand()) + (r > 0.0f ? 0.2f : -0.2f);   /* away from the middle, as the arc */
+    sc_tgt[k] = fm_clampf(sc_tgt[k], -1.0f, 1.0f);
+    sc_left[k] = (uint32_t)((25.0f + 35.0f * sc_frand()) * EN_SR);
+}
+static void sc_reseed(void)
+{
+    int k;
+    sc_rng = (rng * 3266489917u) ^ 0x85EBCA6Bu;
+    sc_rng |= 1u;
+    for (k = 0; k < SC_N; k++) {
+        sc_pick(k);
+        sc_cur[k] = sc_tgt[k] * 0.6f;           /* a piece starts partway there */
+    }
+}
+static void sc_step(uint32_t n)
+{
+    int k;
+    const float a = fm_minf((float)n / (20.0f * EN_SR), 1.0f);
+    for (k = 0; k < SC_N; k++) {
+        if (sc_left[k] <= n)
+            sc_pick(k);
+        else
+            sc_left[k] -= n;
+        sc_cur[k] += (sc_tgt[k] - sc_cur[k]) * a;
+    }
+}
+static float sc_val(int k) { return pal_amt * sc_cur[k]; }
+/* ===== end of scene block ============================================================================= */
+
+/* ===== AMB1-PLUGIN: bells as a struck object ===================================================================
+ * Four numbers per bell loop, rolled from their own random generator (so the notes and the Palette's own rolls are
+ * untouched) and drifting like the Palette's: material (soft/dead 0 .. hard/metal 1), size (small 0 .. large 1),
+ * stiffness (0 string-like .. 1 bar-like .. 1.3 plate-like), damping (0 free .. 0.8 held by a finger).
+ * At a strike they become the partial ratios, levels and decay times of OB_NP sine partials. */
+enum { OB_MAT, OB_SIZE, OB_STIFF, OB_DAMP, OB_PER = 4, OB_N = EN_NLOOP * OB_PER, OB_NP = 5 };
+static uint32_t ob_rng = 1u;
+static float ob_cur[OB_N], ob_tgt[OB_N], ob_garden[OB_PER];
+static uint32_t ob_left[EN_NLOOP];
+#define OB_GAIN 1.07f                           /* level trim: the object bell's loudness against the FM bell (checked on renders) */
+static float ob_frand(void)
+{
+    ob_rng ^= ob_rng << 13;
+    ob_rng ^= ob_rng >> 17;
+    ob_rng ^= ob_rng << 5;
+    return (float)(ob_rng >> 8) * (1.0f / 16777216.0f);
+}
+static float ob_range(float lo, float hi) { return lo + (hi - lo) * ob_frand(); }
+static const float OB_LO[OB_PER] = {0.0f, 0.0f, 0.0f, 0.0f}, OB_HI[OB_PER] = {1.0f, 1.0f, 1.3f, 0.8f};
+static void ob_pick(int g)
+{
+    int k;
+    const int near = ob_frand() < 0.7f;          /* mostly a relative of the piece's object, now and then a stranger */
+    for (k = 0; k < OB_PER; k++) {
+        float v;
+        if (near)
+            v = ob_garden[k] + (OB_HI[k] - OB_LO[k]) * 0.2f * (ob_frand() * 2.0f - 1.0f);
+        else
+            v = ob_range(OB_LO[k], OB_HI[k]);
+        if (k == OB_DAMP && !near)
+            v = v * v * (1.0f / OB_HI[k]);       /* strangers are mostly free-ringing */
+        ob_tgt[g * OB_PER + k] = fm_clampf(v, OB_LO[k], OB_HI[k]);
+    }
+    ob_left[g] = (uint32_t)(ob_range(40.0f, 100.0f) * EN_SR);
+}
+static void ob_reseed(void)                      /* with every pal_reseed(): a new piece, a new object */
+{
+    int g, k;
+    ob_rng = (rng * 2246822519u) ^ 0x9E3779B1u;
+    ob_rng |= 1u;
+    for (k = 0; k < OB_PER; k++)
+        ob_garden[k] = ob_range(OB_LO[k], OB_HI[k] * (k == OB_DAMP ? 0.5f : 1.0f));
+    for (g = 0; g < EN_NLOOP; g++)
+        ob_pick(g);
+    for (k = 0; k < OB_N; k++)
+        ob_cur[k] = ob_tgt[k];
+}
+static void ob_step(uint32_t n)
+{
+    int g, k;
+    const float a = fm_minf((float)n / (20.0f * EN_SR), 1.0f);
+    for (g = 0; g < EN_NLOOP; g++) {
+        if (ob_left[g] <= n)
+            ob_pick(g);
+        else
+            ob_left[g] -= n;
+    }
+    for (k = 0; k < OB_N; k++)
+        ob_cur[k] += (ob_tgt[k] - ob_cur[k]) * a;
+}
+/* the rules: object numbers -> partials. f0 in Hz, t60 the stock bell's ring time for this note, vel 0..1 */
+static void ob_strike(bell_t *v, int l, float f0, float t60, float vel)
+{
+    const float mat = fm_clampf(ob_cur[l * OB_PER + OB_MAT] + 0.35f * sc_val(SC_B), 0.0f, 1.0f),
+                sz = fm_clampf(ob_cur[l * OB_PER + OB_SIZE] + 0.3f * sc_val(SC_R), 0.0f, 1.0f),
+                st = fm_clampf(ob_cur[l * OB_PER + OB_STIFF] + 0.45f * sc_val(SC_I), 0.0f, 1.3f),
+                dp = fm_clampf(ob_cur[l * OB_PER + OB_DAMP] - 0.25f * sc_val(SC_R), 0.0f, 0.8f);
+    const float e = 1.0f + st, a0 = 1.0f + 0.5f * st;           /* ratio_k = ((k + a0) / a0)^e: 1,2,3.. string; 1,2.76,5.4,8.9 bar */
+    const float q = 2.0f - 0.9f * mat;                           /* how fast loss grows with frequency: soft stuff loses its highs */
+    const float loss = 0.35f - 0.2f * mat + 3.0f * dp;
+    const float T0 = fm_clampf(t60 * (0.5f + 1.1f * mat) * (0.6f + 1.1f * sz) / (1.0f + 0.8f * dp), 0.15f, 9.0f);
+    const float tilt = fm_clampf(2.6f - 1.6f * btone - 0.8f * mat - 0.5f * vel + 0.6f * sz, 0.2f, 3.2f);
+    const float split = 0.15f + 1.1f * (1.0f - sz);              /* Hz between a mode and its twin: small objects shimmer faster */
+    float al[OB_NP], a[OB_NP], inc[OB_NP], amin = 1e9f, norm = 0.0f, e0 = 0.0f, e1 = 0.0f;
+    int k;
+    for (k = 0; k < OB_NP; k++) {
+        const float r = fm_powf(((float)k + a0) / a0, e), fr = f0 * r;
+        inc[k] = fr * (1.0f / EN_SR);
+        a[k] = fr < 0.42f * EN_SR ? fm_powf(r, -tilt) : 0.0f;   /* nothing past the Nyquist, as the FM bell is kept below it */
+        al[k] = (6.9f / T0) * (1.0f + loss * (fm_powf(r, q) - 1.0f));
+        if (a[k] > 0.0f && al[k] < amin)
+            amin = al[k];
+        e0 += a[k] * a[k] * (k < 2 ? 1.49f : 1.0f);
+        e1 += a[k] * a[k] * (k < 2 ? 1.49f : 1.0f) * (6.9f / t60) / al[k];   /* energy over the ring: short rings carry less */
+    }
+    /* the same energy as the stock bell would have, but never more than 2.2x the strike's own level (dead thuds stay quiet) */
+    norm = e0 > 0.0f ? OB_GAIN * fm_minf(fm_rsqrtf(e1), 2.2f * fm_rsqrtf(e0)) : 0.0f;
+    v->obj = 1;
+    for (k = 0; k < OB_NP; k++) {
+        const float rate = (al[k] - amin) * (1.0f / EN_SR);
+        v->pa[k] = a[k] * norm;
+        v->pd[k] = fm_expf(-fm_minf(rate, 0.02f));
+        v->pinc[k] = inc[k];
+        v->pph[k] = ob_frand();
+    }
+    for (k = 0; k < 2; k++) {                    /* the twins of the first two modes */
+        v->pa[OB_NP + k] = 0.7f * v->pa[k];
+        v->pd[OB_NP + k] = v->pd[k];
+        v->pinc[OB_NP + k] = v->pinc[k] + split * (1.0f / EN_SR) * (float)(k + 1);
+        v->pph[OB_NP + k] = ob_frand();
+    }
+    v->adec = fm_expf(-amin / EN_SR);
+    v->amul = fm_clampf(0.4f + 2.6f * (0.3f + 0.7f * mat) * (1.3f - 0.5f * sz), 0.3f, 3.5f);
+}
+/* ===== end of prototype block ========================================================================= */
 static void pal_pick(int g)                     /* new targets for one loop (g < EN_NLOOP) or the pad */
 {
     if (pal_frand() < 0.3f)                      /* now and then a voice changes family */
@@ -625,6 +787,8 @@ static void pal_reseed(void)                    /* a new piece: a new garden fam
         pal_pick(g);
     for (k = 0; k < PAL_N; k++)
         pal_cur[k] = pal_tgt[k];
+    ob_reseed();
+    sc_reseed();
 }
 static void pal_step(uint32_t n)                /* once a chunk */
 {
@@ -638,6 +802,8 @@ static void pal_step(uint32_t n)                /* once a chunk */
     }
     for (k = 0; k < PAL_N; k++)
         pal_cur[k] += (pal_tgt[k] - pal_cur[k]) * a;
+    ob_step(n);
+    sc_step(n);
 }
 static float pal_mix(int k, float base)         /* the value in use: upstream's, moved toward the palette's by the amount */
 {
@@ -852,6 +1018,7 @@ static void bell_voice(int l, int n, float vel, int32_t wait)
     v->note = (uint8_t)n;
     v->loop = (uint8_t)l;
     v->cph = v->mph = 0.0f;
+    v->obj = 0;
     v->cinc = mtof((float)n) * (1.0f / EN_SR);
     ri = par[P_BTONE] * 5 / 101 + LOOP_RAT[l];
     v->minc = v->cinc * RATIO[ri < 0 ? 0 : ri > 4 ? 4 : ri];
@@ -873,6 +1040,10 @@ static void bell_voice(int l, int n, float vel, int32_t wait)
         v->idx = fm_minf(v->idx * fm_clampf(pal_mix(l * PAL_PER + PAL_IDX, 1.0f), 0.3f, 2.2f), 1.6f);
     v->idec = fm_expf(-6.9f / ((0.35f + 2.6f * btone) * EN_SR));
     v->att = 0.0f;
+    if (pal_amt > 0.0f) {                       /* AMB1-PLUGIN: the struck object replaces the FM bell */
+        t60 = fm_clampf(4.2f - (float)(n - 60) * 0.06f, 1.6f, 5.0f) * LOOP_DEC[l];
+        ob_strike(v, l, mtof((float)n), t60, vel);
+    }
     p = (LOOP_PAN[l] + 1.0f) * (FM_PI / 4.0f);
     v->gl = fm_cosf(p);
     v->gr = fm_sinf(p);
@@ -1588,8 +1759,9 @@ static void render_pad(uint32_t n)
               gl, gr, pn, tgt = 0.0f, idx = 0.0f;
         uint32_t j;
         const int pal = pal_amt > 0.0f;           /* AMB1-PLUGIN: the palette's Rhodes */
-        const float pal_b = pal ? fm_clampf(pal_mix(PAL_PAD + 1, 1.0f), 0.3f, 2.0f) : 1.0f,
-                    pal_h = pal ? fm_clampf(pal_mix(PAL_PAD + 2, 0.12f), 0.0f, 0.5f) : 0.12f;
+        const float pal_b = pal ? fm_clampf(pal_mix(PAL_PAD + 1, 1.0f) * fm_expf(1.1f * sc_val(SC_B)), 0.2f, 4.0f) : 1.0f,
+                    pal_h = pal ? fm_clampf(pal_mix(PAL_PAD + 2, 0.12f) + 0.3f * sc_val(SC_I), 0.0f, 0.5f) : 0.12f;
+        const float vsaw = 0.45f * fm_maxf(0.1f, 1.0f + 1.2f * sc_val(SC_I));         /* AMB1-PLUGIN: the Voices pad's saw */
         if (amp < 1e-5f && pad_gain < 1e-4f) {
             v->amp = 0.0f;
             continue;
@@ -1629,7 +1801,7 @@ static void render_pad(uint32_t n)
                 continue;
             }
             /* as Discreet Music's Synthi: a mellow triangle (a sine's neighbour), a little saw in it */
-            x = (p0 < 0.5f ? 4.0f * p0 - 1.0f : 3.0f - 4.0f * p0) * 1.4f + 0.45f * blep_saw(p0, v->inc[0]) + 0.6f * sine(p0);
+            x = (p0 < 0.5f ? 4.0f * p0 - 1.0f : 3.0f - 4.0f * p0) * 1.4f + vsaw * blep_saw(p0, v->inc[0]) + 0.6f * sine(p0);
             p0 += v->inc[0];
             if (p0 >= 1.0f)
                 p0 -= 1.0f;
@@ -1672,6 +1844,15 @@ static void render_bass(uint32_t n)
     const float g = bass_vol * 0.42f, tgt = en_playing && !bass.rest ? 1.0f : 0.0f,
                 rate = tgt > 0.0f ? 1.0f / (2.5f * EN_SR) : 1.0f / (4.0f * EN_SR);
     float ph = bass.ph, amp = bass.amp, inc;
+    float bw0 = 0.75f, bw1 = 0.45f, bw2 = 0.12f, bw3 = 0.0f;
+    if (pal_amt > 0.0f) {                        /* AMB1-PLUGIN: sub, 2nd and 3rd harmonic follow the scene; the weights' sum stays 1.32 */
+        float k;
+        bw1 = 0.45f * (1.0f + 0.9f * sc_val(SC_R));
+        bw2 = fm_maxf(0.0f, 0.12f + 0.35f * sc_val(SC_I));
+        bw3 = fm_maxf(0.0f, 0.28f * sc_val(SC_B));
+        k = 1.32f / (bw0 + bw1 + bw2 + bw3);
+        bw0 *= k; bw1 *= k; bw2 *= k; bw3 *= k;
+    }
     if (amp < 1e-5f && !en_playing) {
         bass.amp = 0.0f;
         en_bass_level = 0.0f;
@@ -1680,7 +1861,7 @@ static void render_bass(uint32_t n)
     bass.note += (bass.target - bass.note) * fm_minf((float)n * glide_k, 1.0f);   /* Glide */
     inc = mtof(bass.note) * (1.0f / EN_SR);
     for (j = 0; j < n; j++) {
-        float x = sine(ph) * 0.75f + sine(ph * 0.5f + 0.25f) * 0.45f + sine(ph * 2.0f) * 0.12f;
+        float x = sine(ph) * bw0 + sine(ph * 0.5f + 0.25f) * bw1 + sine(ph * 2.0f) * bw2 + sine(ph * 3.0f) * bw3;
         ph += inc;
         if (ph >= 2.0f)                          /* two turns: the sub-octave's period */
             ph -= 2.0f;
@@ -1712,6 +1893,34 @@ static void render_bells(uint32_t n)
             }
             j = (uint32_t)v->wait;
             v->wait = 0;
+        }
+        if (v->obj) {                            /* AMB1-PLUGIN: partials */
+            float *pp = v->pph;
+            for (; j < n; j++) {
+                float x = 0.0f;
+                int k;
+                for (k = 0; k < OB_NP + 2; k++) {
+                    x += sine(pp[k]) * v->pa[k];
+                    pp[k] += v->pinc[k];
+                    if (pp[k] >= 1.0f)
+                        pp[k] -= 1.0f;
+                    v->pa[k] *= v->pd[k];
+                }
+                x *= amp * att * g;
+                mixl[j] += x * v->gl;
+                mixr[j] += x * v->gr;
+                rsend[j] += x * 0.7f;
+                esend[j] += x * 0.85f;
+                amp *= v->adec;
+                att += (1.0f - att) * arate * v->amul;
+            }
+            v->amp = amp;
+            v->att = att;
+            if (amp < 0.0008f) {
+                v->on = 0;
+                midi(0x81, v->note, 0);
+            }
+            continue;
         }
         for (; j < n; j++) {
             float m = sine(mph) * idx, x;

@@ -2,7 +2,8 @@
 // palette_test: the Palette (a generative sound source). No JUCE. Every case runs in a fresh child process (the engine's
 // random generator is file-static), prints one line of facts, and the parent compares them.
 //   ./palette_test                          the checks (exit 0 = all passed)
-//   ./palette_test child <pct> <seed> <piece> <seconds>
+//   ./palette_test child <pct> <seed> <piece> <seconds> [layers]
+//   layers: 0 all as the piece has them; 1 bass line + drum loop only; 2 drums only; 3 bells muted (pad, bass, drums)
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
@@ -26,7 +27,7 @@ extern "C" void en_midi_out(uint32_t st, uint32_t d1, uint32_t d2)
     }
 }
 
-static int child(int pct, uint32_t seed, int piece, double secs)
+static int child(int pct, uint32_t seed, int piece, double secs, int layers = 0)
 {
     AmbCore core;
     core.acquire();
@@ -37,6 +38,9 @@ static int child(int pct, uint32_t seed, int piece, double secs)
     for (int i = 0; i < P_NPARAMS; ++i)
         if (i != P_MIDI)
             c.par[(size_t)i] = par[i];
+    if (layers == 1) { c.par[(size_t)P_PAD] = 0; c.par[(size_t)P_BELLS] = 0; c.par[(size_t)P_BASS] = 60; c.par[(size_t)P_PULSE] = 60; c.par[(size_t)P_HITS] = 100; }
+    if (layers == 2) { c.par[(size_t)P_PAD] = 0; c.par[(size_t)P_BELLS] = 0; c.par[(size_t)P_BASS] = 0; c.par[(size_t)P_PULSE] = 60; c.par[(size_t)P_HITS] = 100; }
+    if (layers == 3) c.par[(size_t)P_BELLS] = 0;
     c.palette = pct;
     c.seed = seed;
     core.prepare(44100.0, c);
@@ -72,10 +76,10 @@ static int child(int pct, uint32_t seed, int piece, double secs)
 }
 
 using Facts = std::map<std::string, std::string>;
-static Facts run(const char* self, int pct, uint32_t seed, int piece, double secs)
+static Facts run(const char* self, int pct, uint32_t seed, int piece, double secs, int layers = 0)
 {
     const std::string cmd = std::string("\"") + self + "\" child " + std::to_string(pct) + " " + std::to_string(seed) + " " +
-                            std::to_string(piece) + " " + std::to_string(secs);
+                            std::to_string(piece) + " " + std::to_string(secs) + " " + std::to_string(layers);
     Facts f;
     FILE* p = popen(cmd.c_str(), "r");
     if (!p)
@@ -104,12 +108,10 @@ int main(int argc, char** argv)
 {
     if (argc >= 2 && std::strcmp(argv[1], "child") == 0)   // (never fall through to the parent: that would spawn children forever)
     {
-        if (argc != 6)
+        if (argc != 6 && argc != 7)
             return 2;
-        return child(atoi(argv[2]), (uint32_t)atoi(argv[3]), atoi(argv[4]), atof(argv[5]));
+        return child(atoi(argv[2]), (uint32_t)atoi(argv[3]), atoi(argv[4]), atof(argv[5]), argc == 7 ? atoi(argv[6]) : 0);
     }
-    if (false)
-        return child(atoi(argv[2]), (uint32_t)atoi(argv[3]), atoi(argv[4]), atof(argv[5]));
 
     printf("palette: fresh process per case\n");
     Facts a0 = run(argv[0], 0, 11, 0, 60), a0b = run(argv[0], 0, 11, 0, 60);
@@ -130,6 +132,21 @@ int main(int argc, char** argv)
                         std::atof(f.at("rms").c_str()) > 0.005;
         report(("piece " + std::to_string(piece) + " at palette 100: finite, audible, not clipping").c_str(), ok,
                f.empty() ? "" : "(peak " + f.at("peak") + ", rms " + f.at("rms") + ")");
+    }
+    // Palette 2: the whole-sound morph. The drums, the notes and the level must not be touched.
+    for (int piece : {0, 4, 7})
+    {
+        const Facts z = run(argv[0], 0, 5, piece, 60, 2), p = run(argv[0], 100, 5, piece, 60, 2);
+        report(("piece " + std::to_string(piece) + ": the drums alone are bit-identical at palette 0 and 100").c_str(),
+               !z.empty() && !p.empty() && z.at("audio") == p.at("audio"));
+        const Facts n0 = run(argv[0], 0, 5, piece, 90), n100 = run(argv[0], 100, 5, piece, 90);
+        report(("piece " + std::to_string(piece) + ": palette 100 plays the same notes as palette 0").c_str(),
+               !n0.empty() && !n100.empty() && n0.at("notes") == n100.at("notes") && n0.at("count") == n100.at("count"),
+               n0.empty() ? "" : "(" + n0.at("count") + " notes)");
+        const Facts b0 = run(argv[0], 0, 5, piece, 120, 1), b100 = run(argv[0], 100, 5, piece, 120, 1);
+        const double db = (b0.empty() || b100.empty()) ? 99.0 : 20.0 * std::log10(std::atof(b100.at("rms").c_str()) / std::atof(b0.at("rms").c_str()));
+        report(("piece " + std::to_string(piece) + ": bass line + drum loop stay within 3 dB of palette 0").c_str(), std::fabs(db) < 3.0,
+               "(" + std::to_string(db) + " dB)");
     }
     {
         const Facts f = run(argv[0], 100, 9, 0, 900);
